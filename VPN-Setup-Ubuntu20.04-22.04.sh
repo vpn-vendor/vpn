@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Версия скрипта: 1.1.0
+# Версия скрипта: 2.0.0
 
 echo ""
 echo "Начинаю настройку сервера..."
@@ -234,13 +234,22 @@ sudo sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
 echo ""
 echo "[*] Установка сайта для добавления конфигов..."
 echo ""
-chmod 750 /etc/openvpn/
-chmod 750 /etc/wireguard/
+sudo chmod -R 755 /etc/openvpn
+sudo chmod -R 755 /etc/wireguard
+sudo chown -R www-data:www-data /etc/openvpn
+sudo chown -R www-data:www-data /etc/wireguard
 echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl start openvpn*" | sudo tee -a /etc/sudoers
 echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick*, /bin/systemctl start wg-quick*" | sudo tee -a /etc/sudoers
 echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable wg-quick*, /bin/systemctl disable wg-quick*" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart openvpn@client1*" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl start openvpn@client1*" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable openvpn@client1*" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@tun0*" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart wg-quick@tun0*" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable wg-quick@tun0*" | sudo tee -a /etc/sudoers
 echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
 echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | sudo tee -a /etc/sudoers
 sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables-save > /etc/iptables/rules.v4
 sudo iptables-save | sudo tee /etc/iptables/rules.v4
@@ -252,7 +261,53 @@ sudo git clone https://github.com/Rostarc/VPN-Web-Installer.git /var/www/html
 sudo chown -R www-data:www-data /var/www/html
 sudo chmod -R 755 /var/www/html
 
+# Добавление cron-задачи для автоматического обновления
 echo "0 4 * * * /bin/bash /var/www/html/update.sh" | sudo crontab -
+
+# Создание файла .htaccess
+cat <<EOF | sudo tee /var/www/html/.htaccess
+# Разрешаем доступ только с локального IP
+<RequireAll>
+    Require ip 192.168
+</RequireAll>
+EOF
+
+# Настройка Apache для использования .htaccess
+sudo a2enmod rewrite
+sudo systemctl restart apache2
+
+# Создание unit-файла для systemd
+cat <<EOF | sudo tee /etc/systemd/system/vpn-update.service
+[Unit]
+Description=VPN Update Service
+After=network.target
+
+[Service]
+ExecStart=/bin/bash /var/www/html/update.sh
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Создание unit-файла для таймера systemd
+cat <<EOF | sudo tee /etc/systemd/system/vpn-update.timer
+[Unit]
+Description=Run VPN Update Script daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Рестарт systemd и запуск таймера
+sudo systemctl daemon-reload
+sudo systemctl enable vpn-update.service
+sudo systemctl enable vpn-update.timer
+sudo systemctl start vpn-update.timer
 
 echo ""
 echo "[*] Установка Завершена!"
