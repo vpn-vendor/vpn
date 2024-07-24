@@ -236,6 +236,7 @@ echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl 
 echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick*, /bin/systemctl start wg-quick*" | sudo tee -a /etc/sudoers
 echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable wg-quick*, /bin/systemctl disable wg-quick*" | sudo tee -a /etc/sudoers
 echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
 sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables-save > /etc/iptables/rules.v4
 sudo iptables-save | sudo tee /etc/iptables/rules.v4
