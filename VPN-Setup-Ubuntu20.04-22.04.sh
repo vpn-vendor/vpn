@@ -67,12 +67,13 @@ output_interface=$(echo -e "$full_list" | awk -v num="$output_interface_number" 
 input_interface=${input_interface%:}
 output_interface=${output_interface%:}
 
-# Выводим выбранные интерфейсы для подтверждения
+# Выводим выбранные интерфейсы
 echo ""
 echo "ВХОДЯЩИЙ сетевой интерфейс: $input_interface"
 echo "ВЫХОДЯЩИЙ сетевой интерфейс: $output_interface"
 
 # Запрашиваем у пользователя, хочет ли он изменить стандартный локальный адрес
+echo "Если вы не знаете или ставите единственный сервер, то лучше согласится и принять стандартный локальный IP-адрес"
 read -p "Хотите изменить стандартный локальный айпи адрес (192.168.1.1)? [y/n]: " change_local_ip
 
 if [ "$change_local_ip" == "y" ]; then
