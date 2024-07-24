@@ -240,7 +240,7 @@ sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables-save > /etc/iptables/rules.v4
 sudo iptables-save | sudo tee /etc/iptables/rules.v4
 sudo service iptables restart
-rm -rf /var/www/html/*
+sudo rm -rf /var/www
 sudo git clone https://github.com/Rostarc/VPN-Web-Installer.git /var/www/html
 
 # Установка прав доступа к /var/www/html
