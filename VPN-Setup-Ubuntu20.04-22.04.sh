@@ -88,6 +88,10 @@ else
     local_ip="192.168.1.1"
 fi
 
+# Даем права на редактирование файла если не выданы
+sudo chmod 600 /etc/netplan/01-network-manager-all.yaml
+sudo chown root:root /etc/netplan/01-network-manager-all.yaml
+
 # Вывод вариантов настройки сетевых подключений
 echo ""
 echo "Выберите вариант настройки IP:"
