@@ -149,27 +149,42 @@ else
     exit 1
 fi
 
-echo ""
-echo "[*] Сохраняю настройки для применения..."
-echo ""
-sudo netplan apply
+# Установка vSwitch если не установлен
+sudo apt-get install openvswitch-switch -y
+sudo systemctl start openvswitch-switch
+sudo systemctl enable openvswitch-switch
 
 # Исправление прав доступа к файлу конфигурации netplan
 sudo chmod 600 /etc/netplan/01-network-manager-all.yaml
 sudo chown root:root /etc/netplan/01-network-manager-all.yaml
 
-sleep 7
+echo ""
+echo "[*] Сохраняю настройки для применения..."
+echo ""
+sudo netplan apply
+
+sleep 10
 
 echo ""
 echo "[*] Проверка выхода в интернет..."
 echo ""
-ping -q -c1 google.com &>/dev/null && { echo ""; echo "[*] Проверка выхода в интернет = УСПЕШНО."; echo ""; } || { echo ""; echo "[*] Ошибка: Интернет соединение недоступно. Пожалуйста, проверьте, что сервер подключен к сети и вы подвязали MAC-адрес оборудования у провайдера."; echo ""; exit 1; }
+response=$(curl -s -o /dev/null -w "%{http_code}" http://www.google.com)
 
-# SSH доступ
+if [ "$response" -eq 200 ]; then
+    echo ""
+    echo "[*] Проверка выхода в интернет = УСПЕШНО."
+    echo ""
+else
+    echo ""
+    echo "[*] Ошибка: Интернет соединение недоступно. Пожалуйста, проверьте, что сервер подключен к сети и вы подвязали MAC-адрес оборудования у провайдера."
+    echo ""
+    exit 1
+fi
+
+# Открывает доступ по SSH
 echo ""
 echo "[*] Открываю порт 22 для подключений по SSH..."
 echo ""
-# Открываем доступ по SSH
 sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
 systemctl restart sshd
 sudo ufw allow OpenSSH
