@@ -28,7 +28,7 @@ sudo systemctl stop systemd-resolved
 sudo systemctl disable systemd-resolved
 sudo rm /etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-echo "nameserver 1.1.1.1" | sudo tee -a /etc/resolv.conf
+echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
 
 # Получаем все интерфейсы, кроме lo
 interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
@@ -116,7 +116,7 @@ network:
       dhcp4: false
       addresses: [$local_ip/24]
       nameservers:
-        addresses: [8.8.8.8, 1.1.1.1]
+        addresses: [8.8.8.8, 8.8.4.4]
       optional: true
 EOF
 elif [ "$choice" == "2" ]; then
@@ -142,7 +142,7 @@ network:
       dhcp4: false
       addresses: [$local_ip/24]
       nameservers:
-        addresses: [8.8.8.8, 1.1.1.1]
+        addresses: [8.8.8.8, 8.8.4.4]
       optional: true
 EOF
 else
