@@ -18,21 +18,7 @@ echo ""
 echo "[*] Установка дополнительных программ и обновлений..."
 echo ""
 apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y htop net-tools mtr isc-dhcp-server network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php
-
-# Отключение systemd-resolved и настройка DNS
-echo ""
-echo "[*] Настройка DNS..."
-echo ""
-sudo systemctl stop systemd-resolved
-sudo systemctl disable systemd-resolved
-sudo rm /etc/resolv.conf
-echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
-echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
-sudo systemctl enable systemd-resolved
-sudo systemctl start systemd-resolved
-sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-sudo systemctl restart systemd-networkd
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php
 
 # Получаем все интерфейсы, кроме lo
 interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
@@ -186,6 +172,28 @@ else
     exit 1
 fi
 
+# Настройка DNS
+RESOLV_CONF="/etc/resolvconf/resolv.conf.d/base"
+RESOLV_CONF2="/etc/resolv.conf"
+
+# DNS сервера
+DNS1="nameserver 8.8.8.8"
+DNS2="nameserver 8.8.4.4"
+
+# Проверка DNS серверов
+grep -qxF "$DNS1" "$RESOLV_CONF" || echo "$DNS1" | sudo tee -a "$RESOLV_CONF"
+
+# Проверка и добавление второго DNS сервера, если он отсутствует
+grep -qxF "$DNS2" "$RESOLV_CONF" || echo "$DNS2" | sudo tee -a "$RESOLV_CONF"
+
+# Проверка и добавление первого DNS сервера, если он отсутствует
+grep -qxF "$DNS1" "$RESOLV_CONF2" || echo "$DNS1" | sudo tee -a "$RESOLV_CONF2"
+
+# Проверка и добавление второго DNS сервера, если он отсутствует
+grep -qxF "$DNS2" "$RESOLV_CONF2" || echo "$DNS2" | sudo tee -a "$RESOLV_CONF2"
+
+sudo resolvconf -u
+
 # Открывает доступ по SSH
 echo ""
 echo "[*] Открываю порт 22 для подключений по SSH..."
@@ -198,45 +206,24 @@ echo ""
 echo "[*] Настройка DHCP сервера..."
 echo ""
 
-# Путь к файлу isc-dhcp-server
-dhcpd_config_file="/etc/dhcp/dhcpd.conf"
+# Путь к конфигурационному файлу dnsmasq
+config_file="/etc/dnsmasq.conf"
 
-# Вносим изменения в файл dhcpd.conf
-cat <<EOF | sudo tee $dhcpd_config_file
-option domain-name "office.net";
-option domain-name-servers 8.8.8.8, 8.8.4.4;
-
-default-lease-time 600;
-max-lease-time 7200;
-
-ddns-update-style none;
-
-authoritative;
-
-server-name OFFICE-NET;
-non-authoritative;
-ddns-update-style interim;
-ignore client-updates;
-
-subnet ${local_ip%.*}.0 netmask 255.255.255.0 {
-  option routers ${local_ip%.*}.1;
-  option broadcast-address ${local_ip%.*}.255;
-  option domain-name "office.net";
-  range ${local_ip%.*}.2 ${local_ip%.*}.254;
-  option domain-name-servers 8.8.8.8, 8.8.4.4;
-  default-lease-time 43200;
-  max-lease-time 86400;
-}
+# Ввод данных в файл для DNS
+cat <<EOF | sudo tee -a $config_file
+dhcp-authoritative
+domain=office.net
+listen-address=127.0.0.1,$local_ip
+dhcp-range=${local_ip%.*}.2,${local_ip%.*}.254,255.255.255.0,12h
+server=8.8.8.8
+server=8.8.4.4
+cache-size=10000
 EOF
 
-# Настройка интерфейсов для isc-dhcp-server
-cat <<EOF | sudo tee /etc/default/isc-dhcp-server
-INTERFACESv4="$output_interface"
-INTERFACESv6=""
-EOF
-
-sudo systemctl restart isc-dhcp-server
-sudo systemctl enable isc-dhcp-server
+sudo systemctl stop systemd-resolved
+sudo systemctl disable systemd-resolved
+sudo systemctl restart dnsmasq
+sudo systemctl enable dnsmasq
 
 echo ""
 echo "[*] Настраиваем MASQUERADE..."
