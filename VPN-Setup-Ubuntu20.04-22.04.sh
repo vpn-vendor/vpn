@@ -29,6 +29,10 @@ sudo systemctl disable systemd-resolved
 sudo rm /etc/resolv.conf
 echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 echo "nameserver 8.8.4.4" | sudo tee -a /etc/resolv.conf
+sudo systemctl enable systemd-resolved
+sudo systemctl start systemd-resolved
+sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+sudo systemctl restart systemd-networkd
 
 # Получаем все интерфейсы, кроме lo
 interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
