@@ -284,39 +284,6 @@ EOF
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 
-# Создание unit-файла для systemd
-cat <<EOF | sudo tee /etc/systemd/system/vpn-update.service
-[Unit]
-Description=VPN Update Service
-After=network.target
-
-[Service]
-ExecStart=/bin/bash /var/www/html/update.sh
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# Создание unit-файла для таймера systemd
-cat <<EOF | sudo tee /etc/systemd/system/vpn-update.timer
-[Unit]
-Description=Run VPN Update Script daily
-
-[Timer]
-OnCalendar=daily
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-# Рестарт systemd и запуск таймера
-sudo systemctl daemon-reload
-sudo systemctl enable vpn-update.service
-sudo systemctl enable vpn-update.timer
-sudo systemctl start vpn-update.timer
-
 echo ""
 echo "[*] Установка Завершена!"
 echo ""
