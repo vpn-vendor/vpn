@@ -13,66 +13,70 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-echo ""
-echo "Выбери опцию (вписав цифру и нажав enter):"
-echo "1) Установить и настроить сервер"
-echo "2) Удалить все настройки сервера и начать установку заново"
-echo ""
+#
+while true; do
+    read -p "Введи номер опции (вписав цифру и нажав enter) [1/2]: " action_choice
+    case "$action_choice" in
+        1)
+            echo ""
+            echo "[*] Продолжается установка и настройка сервера..."
+            echo ""
+            break
+            ;;
+        2)
+            echo ""
+            echo "[*] Удаление всех прошлых настроек сервера..."
+            echo ""
 
-read -p "Введи номер опции [1/2]: " action_choice
+            # Остановка служб
+            systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq.service apache2.service || true
+            systemctl disable openvpn@client1.service
+            systemctl disable wg-quick@tun0.service
 
-if [ "$action_choice" == "2" ]; then
-    echo ""
-    echo "[*] Удаление всех прошлых настроек сервера..."
-    echo ""
+            # Удаление OpenVPN и WireGuard
+            rm -rf /etc/openvpn/
+            rm -rf /etc/wireguard/
 
-    # Остановка служб
-    sudo systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq.service apache2.service || true
-    sudo systemctl disable openvpn@client1.service
-    sudo systemctl disable wg-quick@tun0.service
+            # Удаление сайта VPN
+            rm -rf /var/www/html
 
-    # Удаление OpenVPN и WireGuard
-    sudo rm -rf /etc/openvpn/
-    sudo rm -rf /etc/wireguard/
+            # Удаление конфигурации DHCP
+            rm -f /etc/dnsmasq.conf
 
-    # Удаление сайта VPN
-    sudo rm -rf /var/www/html
+            # Удаление unit-файлов для systemd из прошлых версий скрипта 2.0.0
+            rm -f /etc/systemd/system/vpn-update.service
+            rm -f /etc/systemd/system/vpn-update.timer
 
-    # Удаление конфигурации DHCP
-    sudo rm -f /etc/dnsmasq.conf
+            # Отключение и удаление таймера systemd
+            systemctl disable vpn-update.timer
+            systemctl stop vpn-update.timer
 
-    # Удаление unit-файлов для systemd из прошлых версий скрипта 2.0.0
-    sudo rm -f /etc/systemd/system/vpn-update.service
-    sudo rm -f /etc/systemd/system/vpn-update.timer
+            # Удаление остаточных правил
+            iptables -t nat -D POSTROUTING -o tun0 -s 192.168.1.0/24 -j MASQUERADE || true
+            iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE || true
+            iptables-save > /etc/iptables/rules.v4
 
-    # Отключение и удаление таймера systemd из прошлых версий скрипта 2.0.0
-    sudo systemctl disable vpn-update.timer
-    sudo systemctl stop vpn-update.timer
-
-    # Удаление остаточных правил
-    sudo iptables -t nat -D POSTROUTING -o tun0 -s 192.168.1.0/24 -j MASQUERADE || true
-    sudo iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE || true
-    sudo iptables-save > /etc/iptables/rules.v4
-
-    echo ""
-    echo "[*] Все настройки удалены. Готово для повторной установки."
-    echo ""
-    exit 0
-elif [ "$action_choice" == "1" ]; then
-    echo ""
-    echo "[*] Продолжается установка и настройка сервера..."
-    echo ""
-else
-    echo "Неверный выбор. Пожалуйста, выбери 1 или 2 (ЦИФРАМИ)"
-    exit 1
-fi
+            echo ""
+            echo "[*] Все настройки удалены. Готово для повторной установки."
+            echo ""
+            exit 0
+            ;;
+        *)
+            echo "Неверный выбор. Выбери 1 или 2 (ЦИФРАМИ!)"
+            ;;
+    esac
+done
 
 # Установка программ
 echo ""
 echo "[*] Установка дополнительных программ и обновлений..."
 echo ""
-apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php
+apt-get update && apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php
+
+if [ $? -ne 0 ]; then
+    echo "[*] Ошибка при установке пакетов. Проверь подключение к интернету и попробуй снова."
+    exit 1
+fi
 
 # Получаем все интерфейсы, кроме lo
 interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
@@ -117,13 +121,13 @@ echo "ВХОДЯЩИЙ сетевой интерфейс: $input_interface"
 echo "ВЫХОДЯЩИЙ сетевой интерфейс: $output_interface"
 
 # Запрашиваем у пользователя, хочет ли он изменить стандартный локальный адрес
-echo "Если вы не знаете или ставите единственный сервер, то лучше согласится и принять стандартный локальный IP-адрес"
+echo "Если ты не знаешь или ставишь единственный сервер, то лучше согласится и принять стандартный локальный IP-адрес"
 echo "Впиши букву "y" чтобы согласиться изменить или "n" чтобы отказаться и оставить как есть"
-read -p "Хотите изменить стандартный локальный айпи адрес (192.168.1.1)? [y/n]: " change_local_ip
+read -p "Изменить стандартный локальный айпи адрес (192.168.1.1)? [y/n]: " change_local_ip
 
 if [ "$change_local_ip" == "y" ]; then
     # Запрос нового локального IP-адреса
-    read -p "Введите новый локальный IP-адрес например, 192.168.2.1 (ОБЯЗАТЕЛЬНО чтобы окончание было ТОЛЬКО .1 как в примере): " local_ip
+    read -p "Введи новый локальный IP-адрес например, 192.168.2.1 (ОБЯЗАТЕЛЬНО чтобы окончание было ТОЛЬКО .1 как в примере): " local_ip
     # Проверка корректности введенного IP-адреса
     if [[ ! $local_ip =~ ^192\.168\.[0-9]{1,3}\.1$ ]]; then
         echo "Неправильный IP-адрес. Пожалуйста, введите адрес в формате 192.168.X.1, чтобы В КОНЦЕ была единица"
@@ -136,14 +140,14 @@ fi
 
 # Вывод вариантов настройки сетевых подключений
 echo ""
-echo "Выберите вариант настройки IP (вписав цифру и нажав enter):"
+echo "Выбери вариант настройки IP (вписав цифру и нажав enter):"
 echo "1) Получить IP-адрес и интернет по DHCP от провайдера или другого сервера"
 echo "2) Статический IP-адрес по данным от провайдера"
 echo "*Если не знаете, то лучше выбирать 1-й вариант*"
 echo ""
 
 # Проверка настроек сетевых подключений
-read -p "Выберите вариант (вписав цифру и нажав enter) [1/2] : " choice
+read -p "Выбери вариант (вписав цифру и нажав enter) [1/2] : " choice
 echo ""
 sudo rm -f /etc/netplan/*
 
