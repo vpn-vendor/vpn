@@ -37,10 +37,10 @@ if [ "$action_choice" == "2" ]; then
     
     # Удаление OpenVPN и WireGuard
     sudo apt-get purge wireguard -y
-    sudo apt-get remove wireguard
+    sudo apt-get remove wireguard -y
     sudo apt-get autoremove wireguard
     sudo apt-get purge openvpn -y
-    sudo apt-get remove openvpn
+    sudo apt-get remove openvpn -y
     sudo apt-get autoremove openvpn
  
     # Удаление сайта VPN
