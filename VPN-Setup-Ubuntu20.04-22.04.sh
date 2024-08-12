@@ -13,74 +13,73 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Выбор действия
-echo "1) Начать автоустановку и настройку сервера"
-echo "2) Удалить прошлые настройки и начать переустановку сервера"
+echo ""
+echo "Выбери опцию (вписав цифру и нажав enter):"
+echo "1) Установить и настроить сервер"
+echo "2) Удалить все настройки сервера и начать установку заново"
 echo ""
 
-while true; do
-    read -p "Введи номер опции (вписав цифру и нажав enter) [1/2]: " action_choice
-    case "$action_choice" in
-        1)
-            echo ""
-            echo "[*] Продолжается установка и настройка сервера..."
-            echo ""
-            break
-            ;;
-        2)
-            echo ""
-            echo "[*] Удаление всех прошлых настроек сервера..."
-            echo ""
+read -p "Введи номер опции [1/2]: " action_choice
 
-            # Остановка служб
-            systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq.service apache2.service || true
-            systemctl disable openvpn@client1.service
-            systemctl disable wg-quick@tun0.service
+if [ "$action_choice" == "2" ]; then
+    echo ""
+    echo "[*] Удаление всех прошлых настроек сервера..."
+    echo ""
 
-            # Удаление OpenVPN и WireGuard
-            rm -rf /etc/openvpn/
-            rm -rf /etc/wireguard/
+    # Остановка служб
+    sudo systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq.service apache2.service || true
+    sudo systemctl disable openvpn@client1.service
+    sudo systemctl disable wg-quick@tun0.service
 
-            # Удаление сайта VPN
-            rm -rf /var/www/html
+    # Удаление папок OpenVPN и WireGuard
+    sudo rm -rf /etc/openvpn
+    sudo rm -rf /etc/wireguard
+    
+    # Удаление OpenVPN и WireGuard
+    sudo apt-get purge wireguard -y
+    sudo apt-get remove wireguard
+    sudo apt-get autoremove wireguard
+    sudo apt-get purge openvpn -y
+    sudo apt-get remove openvpn
+    sudo apt-get autoremove openvpn
+ 
+    # Удаление сайта VPN
+    sudo rm -rf /var/www/html
 
-            # Удаление конфигурации DHCP
-            rm -f /etc/dnsmasq.conf
+    # Удаление конфигурации DHCP
+    sudo rm -f /etc/dnsmasq.conf
 
-            # Удаление unit-файлов для systemd из прошлых версий скрипта 2.0.0
-            rm -f /etc/systemd/system/vpn-update.service
-            rm -f /etc/systemd/system/vpn-update.timer
+    # Удаление unit-файлов для systemd из прошлых версий скрипта 2.0.0
+    sudo rm -f /etc/systemd/system/vpn-update.service
+    sudo rm -f /etc/systemd/system/vpn-update.timer
 
-            # Отключение и удаление таймера systemd
-            systemctl disable vpn-update.timer
-            systemctl stop vpn-update.timer
+    # Отключение и удаление таймера systemd из прошлых версий скрипта 2.0.0
+    sudo systemctl disable vpn-update.timer
+    sudo systemctl stop vpn-update.timer
 
-            # Удаление остаточных правил
-            iptables -t nat -D POSTROUTING -o tun0 -s 192.168.1.0/24 -j MASQUERADE || true
-            iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE || true
-            iptables-save > /etc/iptables/rules.v4
+    # Удаление остаточных правил
+    sudo iptables -t nat -D POSTROUTING -o tun0 -s 192.168.1.0/24 -j MASQUERADE || true
+    sudo iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE || true
+    sudo iptables-save > /etc/iptables/rules.v4
 
-            echo ""
-            echo "[*] Все настройки удалены. Готово для повторной установки."
-            echo ""
-            exit 0
-            ;;
-        *)
-            echo "Неверный выбор. Выбери 1 или 2 (ЦИФРАМИ!)"
-            ;;
-    esac
-done
+    echo ""
+    echo "[*] Все настройки удалены. Готово для повторной установки."
+    echo ""
+    exit 0
+elif [ "$action_choice" == "1" ]; then
+    echo ""
+    echo "[*] Продолжается установка и настройка сервера..."
+    echo ""
+else
+    echo "Неверный выбор. Пожалуйста, выбери 1 или 2 (ЦИФРАМИ)"
+    exit 1
+fi
 
 # Установка программ
 echo ""
 echo "[*] Установка дополнительных программ и обновлений..."
 echo ""
 apt-get update && apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php
-
-if [ $? -ne 0 ]; then
-    echo "[*] Ошибка при установке пакетов. Проверь подключение к интернету и попробуй снова."
-    exit 1
-fi
 
 # Получаем все интерфейсы, кроме lo
 interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
