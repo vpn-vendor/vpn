@@ -257,6 +257,9 @@ grep -qxF "$DNS2" "$RESOLV_CONF2" || echo "$DNS2" | sudo tee -a "$RESOLV_CONF2"
 
 sudo resolvconf -u
 
+# Перезагрузка
+sudo systemctl restart systemd-resolved
+
 # Открывает доступ по SSH
 echo ""
 echo "[*] Открываю порт 22 для подключений по SSH..."
