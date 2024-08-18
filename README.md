@@ -29,3 +29,4 @@ wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN-Setup-U
 - iptables-persistent
 - openssh-server
 - resolvconf
+- ufw
