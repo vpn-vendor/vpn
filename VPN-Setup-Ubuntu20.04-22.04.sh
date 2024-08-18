@@ -63,7 +63,7 @@ if [ "$action_choice" == "2" ]; then
     sudo iptables-save > /etc/iptables/rules.v4
 
     echo ""
-    echo "[*] Все настройки удалены. Готово для повторной установки."
+    echo "[*] Все настройки удалены. Можно запустить скрипт еще раз и выбрать первый пункт."
     echo ""
     exit 0
 elif [ "$action_choice" == "1" ]; then
@@ -79,7 +79,7 @@ fi
 echo ""
 echo "[*] Установка дополнительных программ и обновлений..."
 echo ""
-apt-get update && apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php
+apt-get update && apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw
 
 # Получаем все интерфейсы, кроме lo
 interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
