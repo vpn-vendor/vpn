@@ -335,9 +335,6 @@ sudo git clone https://github.com/Rostarc/VPN-Web-Installer.git /var/www/html
 sudo chown -R www-data:www-data /var/www/html
 sudo chmod -R 755 /var/www/html
 
-# Добавление cron-задачи для автоматического обновления
-echo "0 4 * * * /bin/bash /var/www/html/update.sh" | sudo crontab -
-
 # Создание файла .htaccess
 cat <<EOF | sudo tee /var/www/html/.htaccess
 # Разрешаем доступ только с локального IP
