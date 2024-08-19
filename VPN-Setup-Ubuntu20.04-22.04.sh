@@ -144,7 +144,7 @@ fi
 
 # Вывод вариантов настройки сетевых подключений
 echo ""
-echo "Выбери вариант настройки IP (вписав цифру и нажав enter):"
+echo "Настройка сетевых интерфейсов:"
 echo "1) Получить IP-адрес и интернет по DHCP от провайдера или другого сервера"
 echo "2) Статический IP-адрес по данным от провайдера"
 echo "*Если не знаешь, то лучше выбирать 1-й вариант*"
@@ -265,7 +265,7 @@ echo ""
 echo "[*] Открываю порт 22 для подключений по SSH..."
 echo ""
 sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-systemctl restart sshd
+sudo systemctl restart ssh
 sudo ufw allow OpenSSH
 
 echo ""
