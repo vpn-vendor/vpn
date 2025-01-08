@@ -38,5 +38,7 @@ wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN.sh -O V
 
 # Контакты и сотрудничество
 Всегда готов обсудить условия для работы с вами и вашими решениями.
+
 Есть VPN-конфигурации для ваших linux серверов, а также Windows/MacOs и Android/Ios.
+
 Обращайтесь за помощью/вопросами в телеграмм - https://t.me/vpn_vendor
