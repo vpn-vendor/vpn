@@ -35,3 +35,7 @@ wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN.sh -O V
 - openssh-server
 - resolvconf
 - ufw
+
+# Контакты и сотрудничество
+Всегда готов обсудить условия для работы с вами и вашими решениями. Есть VPN-конфигурации для linux серверов и windows/MacOs Android/Ios
+Обращайтесь за помощью в телеграмм - https://t.me/vpn_vendor 
