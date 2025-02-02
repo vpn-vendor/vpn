@@ -360,7 +360,14 @@ cat <<EOF | sudo tee /var/www/html/.htaccess
 </RequireAll>
 EOF
 
-# Настройка Apache для использования .htaccess
+# Установка Apache и нужных модулей
+echo "[*] Устанавливаю Apache..."
+sudo apt update
+sudo apt install -y apache2 libapache2-mod-php
+sudo systemctl enable apache2
+sudo systemctl restart apache2
+
+# Включение модуля rewrite
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 
