@@ -1,381 +1,328 @@
 #!/bin/bash
+# =============================================================================
+# Улучшённый скрипт установки VPN-сервера с веб-интерфейсом
+# Поддержка Ubuntu 20.04 и 22.04 (чистая установка)
+# Версия: 1.0 (улучшенная версия, объединяющая лучшие решения)
+# =============================================================================
 
-# ----------------------------------------------------------------------------
-# Скрипт автонастройки VPN-раздачи интернета в локальную сеть + Веб-интерфейс
-# ----------------------------------------------------------------------------
-# Версия скрипта: 3.3.0
-# ----------------------------------------------------------------------------
+# Функция для логирования информационных сообщений
+log_info() {
+    echo -e "[INFO] $1"
+}
 
-SCRIPT_VERSION="3.3.0"
+# Функция для логирования ошибок
+log_error() {
+    echo -e "[ERROR] $1" >&2
+}
 
-echo ""
-echo "Начинаю настройку сервера..."
-echo ""
-
-if [ "$EUID" -ne 0 ]; then
-    echo ""
-    echo "[*] ЭТОТ СКРИПТ ОБЯЗАТЕЛЬНО ДОЛЖЕН БЫТЬ ЗАПУЩЕН ЧЕРЕЗ ROOT/SUDO. Повтори установку с правами суперпользователя"
-    echo ""
-    exit 1
-fi
-
-echo "        .^~!!!~.                                                             .J:                    "
-echo "       ?5777~!?P7 ..    .    ::    . ::           .    .   ::.   . .:.    .:.:@~   :::    . :.      "
-echo "      Y5.JY7YG ~&.:B!  7G 7BJ?JG~ ~#J?JG~        :B7  7B.~5?7YY. PP??PY  7G??5@~ ~PJ?JP~ ~#YJ7      "
-echo "     ^&.?#  P5 7B. ?#.:&~ J#   YB !&:  G5         7&::#! &5!7?#^ BY  ~@:.@!  :&~ &?   Y# ~@^        "
-echo "     ^&:~P??Y5?5^   5GGJ  ?&~.:G5 !&.  PP          YGGY  GP^:^^  #J  ^@: #Y.:?@~ GP:.^GY !@.        "
-echo "      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :?J?!?: .7J??!  :J.        "
-echo "       :~!77!~            7P             :??????J^                                                  "
-echo ""
-echo "==================================================================="
-echo " Скрипт автонастройки (версия ${SCRIPT_VERSION})"
-echo " VPN + Web + DHCP + Netplan"
-echo "==================================================================="
-echo "Выбери опцию (вписав цифру и нажав enter):"
-echo "1) Установить и настроить сервер"
-echo "2) Удалить все настройки сервера"
-echo ""
-
-read -p "Введи номер опции [1/2]: " action_choice
-
-if [ "$action_choice" == "2" ]; then
-    echo ""
-    echo "[*] Удаление всех прошлых настроек сервера..."
-    echo ""
-
-    # Остановка служб
-    sudo systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq.service apache2.service || true
-    sudo systemctl disable openvpn@client1.service
-    sudo systemctl disable wg-quick@tun0.service
-
-    # Удаление папок OpenVPN и WireGuard
-    sudo rm -rf /etc/openvpn
-    sudo rm -rf /etc/wireguard
-    
-    # Удаление OpenVPN и WireGuard
-    sudo apt-get purge wireguard -y
-    sudo apt-get remove wireguard -y
-    sudo apt-get autoremove wireguard
-    sudo apt-get purge openvpn -y
-    sudo apt-get remove openvpn -y
-    sudo apt-get autoremove openvpn
- 
-    # Удаление сайта VPN
-    sudo rm -rf /var/www/html
-
-    # Удаление конфигурации DHCP
-    sudo rm -f /etc/dnsmasq.conf
-
-    # Удаление unit-файлов для systemd из прошлых версий скрипта 2.0.0
-    sudo rm -f /etc/systemd/system/vpn-update.service
-    sudo rm -f /etc/systemd/system/vpn-update.timer
-
-    # Отключение и удаление таймера systemd из прошлых версий скрипта 2.0.0
-    sudo systemctl disable vpn-update.timer
-    sudo systemctl stop vpn-update.timer
-
-    # Удаление остаточных правил
-    sudo iptables -t nat -D POSTROUTING -o tun0 -s 192.168.1.0/24 -j MASQUERADE || true
-    sudo iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE || true
-    sudo iptables-save > /etc/iptables/rules.v4
-
-    echo ""
-    echo "[*] Все настройки удалены. Можно запустить скрипт еще раз и выбрать первый пункт."
-    echo ""
-    exit 0
-elif [ "$action_choice" == "1" ]; then
-    echo ""
-    echo "[*] Продолжается установка и настройка сервера..."
-    echo ""
-else
-    echo "Неверный выбор. Пожалуйста, выбери 1 или 2 (ЦИФРАМИ)"
-    exit 1
-fi
-
-# Установка программ
-echo ""
-echo "[*] Установка дополнительных программ и обновлений..."
-echo ""
-apt-get update && apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw
-
-# Получаем все интерфейсы, кроме lo
-interfaces_and_addresses=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://' | nl)
-
-# Формируем список интерфейсов с адресами
-interfaces_and_addresses=$(ip -o -4 addr show | awk '{print $2 ": " $4}' | sed 's/\/.*//')
-all_interfaces=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://')
-
-# Собираем все интерфейсы и добавляем информацию о тех, которые не имеют IP-адреса
-full_list=""
-for interface in $all_interfaces; do
-    if echo "$interfaces_and_addresses" | grep -q "$interface"; then
-        ip_addr=$(echo "$interfaces_and_addresses" | grep "$interface" | awk '{print $2}')
-        full_list+="$interface: $ip_addr\n"
-    else
-        full_list+="$interface: нет IP-адреса, ВОЗМОЖНО подойдет для локальной сети\n"
-    fi
-done
-
-# Выводим список интерфейсов с адресами по номерам
-echo "Сетевые адреса и интерфейсы:"
-echo -e "$full_list" | nl
-echo ""
-
-# Запрос номера входящего интерфейса
-read -p "Укажи свой ВХОДЯЩИЙ сетевой интерфейс, в который входит интернет от провайдера или другого сервера (ЦИФРАМИ): " input_interface_number
-
-# Запрос номера выходящего интерфейса
-read -p "Укажи свой ВЫХОДЯЩИЙ сетевой интерфейс, к которому будет подключена локальная сеть(ЦИФРАМИ): " output_interface_number
-
-# Получаем имена входного и выходного сетевых интерфейсов по номерам
-input_interface=$(echo -e "$full_list" | awk -v num="$input_interface_number" 'NR == num {print $1}')
-output_interface=$(echo -e "$full_list" | awk -v num="$output_interface_number" 'NR == num {print $1}')
-
-# Удаляем любые двоеточия в конце переменных, если они присутствуют
-input_interface=${input_interface%:}
-output_interface=${output_interface%:}
-
-# Выводим выбранные интерфейсы
-echo ""
-echo "ВХОДЯЩИЙ сетевой интерфейс: $input_interface"
-echo "ВЫХОДЯЩИЙ сетевой интерфейс: $output_interface"
-echo ""
-
-# Запрашиваем у пользователя, хочет ли он изменить стандартный локальный адрес
-echo "Если ты не знаешь или ставишь единственный сервер, то лучше согласится и принять стандартный локальный IP-адрес"
-echo "Впиши букву 'y' чтобы согласиться изменить или 'n' чтобы отказаться и оставить как есть"
-read -p "Изменить стандартный локальный айпи адрес (192.168.1.1)? [y/n]: " change_local_ip
-
-if [ "$change_local_ip" == "y" ]; then
-    # Запрос нового локального IP-адреса
-    read -p "Введи новый локальный IP-адрес например, 192.168.2.1 (ОБЯЗАТЕЛЬНО чтобы окончание было ТОЛЬКО .1 как в примере): " local_ip
-    # Проверка корректности введенного IP-адреса
-    if [[ ! $local_ip =~ ^192\.168\.[0-9]{1,3}\.1$ ]]; then
-        echo "Неправильный IP-адрес. Пожалуйста, введите адрес в формате 192.168.X.1, чтобы В КОНЦЕ была единица"
+# Функция проверки прав root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        log_error "Скрипт должен быть запущен с правами root (через sudo или от root)."
         exit 1
     fi
-else
-    # Используем стандартный локальный IP-адрес
-    local_ip="192.168.1.1"
-fi
+}
 
-# Вывод вариантов настройки сетевых подключений
-echo ""
-echo "Настройка сетевых интерфейсов:"
-echo "1) Получить IP-адрес и интернет по DHCP от провайдера или другого сервера"
-echo "2) Статический IP-адрес по данным от провайдера"
-echo "*Если не знаешь, то лучше выбирать 1-й вариант*"
-echo ""
+# Функция установки необходимых пакетов
+install_packages() {
+    log_info "Обновление репозиториев и установка необходимых пакетов..."
+    apt-get update
+    apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn \
+      apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload \
+      libapache2-mod-php wget ufw openvswitch-switch
+    if [ $? -ne 0 ]; then
+        log_error "Ошибка установки пакетов. Проверьте доступ к интернету и повторите попытку."
+        exit 1
+    fi
+}
 
-# Проверка настроек сетевых подключений
-read -p "Выбери вариант (вписав цифру и нажав enter) [1/2] : " choice
-echo ""
-sudo rm -f /etc/netplan/*
+# Функция получения списка сетевых интерфейсов и выбора входящего и исходящего
+select_interfaces() {
+    log_info "Получаю список сетевых интерфейсов..."
+    # Получаем список всех интерфейсов (исключая loopback) и пытаемся показать их IP-адреса
+    all_interfaces=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://')
+    full_list=""
+    count=0
+    for iface in $all_interfaces; do
+        count=$((count+1))
+        ip_addr=$(ip -o -4 addr show "$iface" 2>/dev/null | awk '{print $4}' | cut -d'/' -f1)
+        if [ -z "$ip_addr" ]; then
+            ip_addr="(нет IP)"
+        fi
+        full_list+="$count) $iface : $ip_addr\n"
+        interfaces_array[$count]="$iface"
+    done
+    echo -e "Доступные сетевые интерфейсы:\n$full_list"
+    echo ""
 
-# Теперь внесем изменения в netplan
-if [ "$choice" == "1" ]; then
-    # Для DHCP
-    cat <<EOF > /etc/netplan/01-network-manager-all.yaml
+    read -p "Введите номер ВХОДЯЩЕГО интерфейса (подключен к интернету): " in_num
+    IN_IF="${interfaces_array[$in_num]}"
+    if [ -z "$IN_IF" ]; then
+        log_error "Некорректный выбор входящего интерфейса."
+        exit 1
+    fi
+
+    read -p "Введите номер ВЫХОДЯЩЕГО интерфейса (локальная сеть): " out_num
+    OUT_IF="${interfaces_array[$out_num]}"
+    if [ -z "$OUT_IF" ]; then
+        log_error "Некорректный выбор выходящего интерфейса."
+        exit 1
+    fi
+
+    log_info "Выбран входящий интерфейс: $IN_IF"
+    log_info "Выбран выходящий интерфейс: $OUT_IF"
+
+    # Запрос локального IP для локальной сети (по умолчанию 192.168.1.1)
+    read -p "Использовать стандартный локальный IP-адрес (192.168.1.1)? [y/n]: " use_default
+    if [ "$use_default" == "n" ]; then
+        read -p "Введите новый локальный IP-адрес в формате 192.168.X.1: " LOCAL_IP
+        if [[ ! $LOCAL_IP =~ ^192\.168\.[0-9]{1,3}\.1$ ]]; then
+            log_error "Неверный формат локального IP. Должен быть вида 192.168.X.1"
+            exit 1
+        fi
+    else
+        LOCAL_IP="192.168.1.1"
+    fi
+    log_info "Локальный IP для локальной сети: $LOCAL_IP"
+}
+
+# Функция настройки netplan
+configure_netplan() {
+    log_info "Настраиваю сетевые подключения через netplan..."
+    rm -f /etc/netplan/*.yaml
+
+    echo "Выберите вариант настройки входящего интерфейса:"
+    echo "1) Получать IP по DHCP"
+    echo "2) Статическая настройка (ввод параметров вручную)"
+    read -p "Ваш выбор [1/2]: " net_choice
+
+    if [ "$net_choice" == "1" ]; then
+        cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 network:
   version: 2
   renderer: networkd
   ethernets:
-    $input_interface:
+    $IN_IF:
       dhcp4: true
-    $output_interface:
+    $OUT_IF:
       dhcp4: false
-      addresses: [$local_ip/24]
+      addresses: [$LOCAL_IP/24]
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
       optional: true
 EOF
-elif [ "$choice" == "2" ]; then
-    # Для статического адреса
-    read -p "Введите IP-адрес: " address
-    read -p "Введите маску подсети [вставь 24 если не знаешь]: " subnet_mask
-    read -p "Введите шлюз: " gateway
-    read -p "Введите DNS1: " dns1
-    read -p "Введите DNS2: " dns2
-
-    cat <<EOF > /etc/netplan/01-network-manager-all.yaml
+    elif [ "$net_choice" == "2" ]; then
+        read -p "Введите статический IP для входящего интерфейса: " STATIC_IP
+        read -p "Введите маску (например, 24): " SUBNET_MASK
+        read -p "Введите шлюз: " GATEWAY
+        read -p "Введите DNS1: " DNS1
+        read -p "Введите DNS2: " DNS2
+        cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 network:
   version: 2
   renderer: networkd
   ethernets:
-    $input_interface:
+    $IN_IF:
       dhcp4: false
-      addresses: [$address/$subnet_mask]
-      gateway4: $gateway
+      addresses: [$STATIC_IP/$SUBNET_MASK]
+      gateway4: $GATEWAY
       nameservers:
-        addresses: [$dns1, $dns2]
-    $output_interface:
+        addresses: [$DNS1, $DNS2]
+    $OUT_IF:
       dhcp4: false
-      addresses: [$local_ip/24]
+      addresses: [$LOCAL_IP/24]
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
       optional: true
 EOF
-else
-    echo "Неправильный выбор."
-    exit 1
-fi
+    else
+        log_error "Неверный выбор варианта настройки сети."
+        exit 1
+    fi
 
-# Установка vSwitch если не установлен
-sudo apt-get install openvswitch-switch -y
-sudo systemctl start openvswitch-switch
-sudo systemctl enable openvswitch-switch
+    # Применяем настройки netplan
+    netplan apply
+    log_info "Настройки netplan применены. Жду 10 секунд для стабилизации..."
+    sleep 10
 
-# Исправление прав доступа к файлу конфигурации netplan
-sudo chmod 600 /etc/netplan/01-network-manager-all.yaml
-sudo chown root:root /etc/netplan/01-network-manager-all.yaml
+    # Проверка интернет-соединения
+    log_info "Проверяю доступ в интернет..."
+    response=$(curl -s -o /dev/null -w "%{http_code}" http://www.google.com)
+    if [ "$response" -ne 200 ]; then
+        log_error "Ошибка: нет доступа в интернет. Проверьте подключение."
+        exit 1
+    fi
+    log_info "Интернет-соединение успешно установлено."
+}
 
-echo ""
-echo "[*] Сохраняю настройки для применения..."
-echo ""
-sudo netplan apply
+# Функция настройки DNS
+configure_dns() {
+    log_info "Настраиваю DNS..."
+    RESOLV_BASE="/etc/resolvconf/resolv.conf.d/base"
+    RESOLV="/etc/resolv.conf"
+    # Добавляем записи (можно изменить при необходимости)
+    for dns in "nameserver 8.8.8.8" "nameserver 8.8.4.4"; do
+        grep -qxF "$dns" "$RESOLV_BASE" || echo "$dns" >> "$RESOLV_BASE"
+        grep -qxF "$dns" "$RESOLV" || echo "$dns" >> "$RESOLV"
+    done
+    resolvconf -u
+    systemctl restart systemd-resolved
+    log_info "DNS настроены."
+}
 
-sleep 10
+# Функция настройки SSH (разрешение root)
+configure_ssh() {
+    log_info "Настраиваю SSH (разрешаю root-доступ)..."
+    sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    systemctl restart ssh || systemctl restart sshd
+    ufw allow OpenSSH
+    log_info "SSH настроен."
+}
 
-echo ""
-echo "[*] Проверка выхода в интернет..."
-echo ""
-response=$(curl -s -o /dev/null -w "%{http_code}" http://www.google.com)
+# Функция настройки DHCP-сервера (dnsmasq)
+configure_dhcp() {
+    log_info "Настраиваю DHCP-сервер (dnsmasq)..."
+    CONFIG_FILE="/etc/dnsmasq.conf"
+    # Резервное копирование исходного файла (если существует)
+    [ -f "$CONFIG_FILE" ] && cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
 
-if [ "$response" -eq 200 ]; then
-    echo ""
-    echo "[*] Проверка выхода в интернет = УСПЕШНО."
-    echo ""
-else
-    echo ""
-    echo "[*] Ошибка: Интернет соединение недоступно. Пожалуйста, проверьте, что сервер подключен к сети и вы подвязали MAC-адрес оборудования у провайдера."
-    echo ""
-    exit 1
-fi
-
-# Настройка DNS
-RESOLV_CONF="/etc/resolvconf/resolv.conf.d/base"
-RESOLV_CONF2="/etc/resolv.conf"
-
-# DNS сервера
-DNS1="nameserver 8.8.8.8"
-DNS2="nameserver 8.8.4.4"
-
-# Проверка DNS серверов
-grep -qxF "$DNS1" "$RESOLV_CONF" || echo "$DNS1" | sudo tee -a "$RESOLV_CONF"
-
-# Проверка и добавление второго DNS сервера, если он отсутствует
-grep -qxF "$DNS2" "$RESOLV_CONF" || echo "$DNS2" | sudo tee -a "$RESOLV_CONF"
-
-# Проверка и добавление первого DNS сервера, если он отсутствует
-grep -qxF "$DNS1" "$RESOLV_CONF2" || echo "$DNS1" | sudo tee -a "$RESOLV_CONF2"
-
-# Проверка и добавление второго DNS сервера, если он отсутствует
-grep -qxF "$DNS2" "$RESOLV_CONF2" || echo "$DNS2" | sudo tee -a "$RESOLV_CONF2"
-
-sudo resolvconf -u
-
-# Перезагрузка
-sudo systemctl restart systemd-resolved
-
-# Открывает доступ по SSH
-echo ""
-echo "[*] Открываю порт 22 для подключений по SSH..."
-echo ""
-sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/' /etc/ssh/sshd_config
-sudo systemctl restart ssh
-sudo ufw allow OpenSSH
-
-echo ""
-echo "[*] Настройка DHCP сервера..."
-echo ""
-
-# Путь к конфигурационному файлу dnsmasq
-config_file="/etc/dnsmasq.conf"
-
-# Ввод данных в файл для DNS
-cat <<EOF | sudo tee -a $config_file
+    cat <<EOF > "$CONFIG_FILE"
 dhcp-authoritative
-domain=office.net
-listen-address=127.0.0.1,$local_ip
-dhcp-range=${local_ip%.*}.2,${local_ip%.*}.254,255.255.255.0,12h
+domain=local.lan
+listen-address=127.0.0.1,$LOCAL_IP
+dhcp-range=${LOCAL_IP%.*}.2,${LOCAL_IP%.*}.254,255.255.255.0,12h
 server=8.8.8.8
 server=8.8.4.4
 cache-size=10000
 EOF
 
-sudo systemctl stop systemd-resolved
-sudo systemctl disable systemd-resolved
-sudo systemctl restart dnsmasq
-sudo systemctl enable dnsmasq
+    systemctl stop systemd-resolved
+    systemctl disable systemd-resolved
+    systemctl restart dnsmasq
+    systemctl enable dnsmasq
+    log_info "DHCP-сервер настроен."
+}
 
-echo ""
-echo "[*] Настраиваем MASQUERADE..."
-echo ""
+# Функция настройки iptables и NAT
+configure_iptables() {
+    log_info "Настраиваю iptables (MASQUERADE)..."
+    # Разрешаем пересылку пакетов
+    sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
+    sysctl -p
 
-sudo sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
-sudo sysctl -p
-iptables -t nat -A POSTROUTING -o tun0 -s ${local_ip%.*}.0/24 -j MASQUERADE
-sudo iptables-save > /etc/iptables/rules.v4
+    # Добавляем правило NAT для интерфейса (предполагается, что VPN-интерфейс будет называться tun0)
+    iptables -t nat -A POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE
+    iptables-save > /etc/iptables/rules.v4
+    log_info "iptables настроены."
+}
 
-echo ""
-echo "[*] Настройка VPN..."
-echo ""
-sudo sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
+# Функция настройки VPN (открываем автозапуск OpenVPN)
+configure_vpn() {
+    log_info "Настраиваю VPN (OpenVPN)..."
+    sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
+    log_info "VPN настроен."
+}
 
-echo ""
-echo "[*] Установка сайта для добавления конфигов..."
-echo ""
-sudo chmod -R 755 /etc/openvpn
-sudo chmod -R 755 /etc/wireguard
-sudo chown -R www-data:www-data /etc/openvpn
-sudo chown -R www-data:www-data /etc/wireguard
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl start openvpn*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick*, /bin/systemctl start wg-quick*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable wg-quick*, /bin/systemctl disable wg-quick*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart openvpn@client1*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl start openvpn@client1*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable openvpn@client1*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@tun0*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart wg-quick@tun0*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable wg-quick@tun0*" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | sudo tee -a /etc/sudoers
-sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-sudo iptables-save > /etc/iptables/rules.v4
-sudo iptables-save | sudo tee /etc/iptables/rules.v4
-sudo service iptables restart
-sudo systemctl restart netfilter-persistent
-sudo rm -rf /var/www
-sudo git clone https://github.com/Rostarc/VPN-Web-Installer.git /var/www/html
+# Функция настройки веб-интерфейса
+configure_web_interface() {
+    log_info "Настраиваю веб-интерфейс для управления VPN..."
 
-# Установка прав доступа к /var/www/html
-sudo chown -R www-data:www-data /var/www/html
-sudo chmod -R 755 /var/www/html
+    # Изменяем права доступа к конфигурационным каталогам
+    chmod -R 755 /etc/openvpn /etc/wireguard
+    chown -R www-data:www-data /etc/openvpn /etc/wireguard
 
-# Создание файла .htaccess
-cat <<EOF | sudo tee /var/www/html/.htaccess
-# Разрешаем доступ только с локального IP
+    # Добавляем разрешения для пользователя www-data (запись sudoers)
+    cat <<EOF >> /etc/sudoers
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl start openvpn*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick*, /bin/systemctl start wg-quick*
+EOF
+
+    # Открываем порт 80 в iptables и сохраняем правила
+    iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+    iptables-save > /etc/iptables/rules.v4
+
+    # Удаляем старый сайт (если есть) и клонируем репозиторий веб-интерфейса
+    rm -rf /var/www/html
+    git clone https://github.com/Rostarc/VPN-Web-Installer.git /var/www/html
+
+    # Настраиваем права для Apache
+    chown -R www-data:www-data /var/www/html
+    chmod -R 755 /var/www/html
+
+    # Создаём .htaccess для ограничения доступа (разрешён доступ только с локальной сети)
+    cat <<EOF > /var/www/html/.htaccess
 <RequireAll>
     Require ip 192.168
 </RequireAll>
 EOF
 
-# Установка Apache и нужных модулей
-echo "[*] Устанавливаю Apache..."
-sudo apt update
-sudo apt install -y apache2 libapache2-mod-php
-sudo systemctl enable apache2
-sudo systemctl restart apache2
+    # Включаем модуль rewrite для Apache и перезапускаем его
+    a2enmod rewrite
+    systemctl restart apache2
+    log_info "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
+}
 
-# Включение модуля rewrite
-sudo a2enmod rewrite
-sudo systemctl restart apache2
+# Функция удаления настроек (откат)
+remove_configuration() {
+    log_info "Удаляю ранее настроенные компоненты..."
 
+    # Остановка служб
+    systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq apache2 2>/dev/null
+    systemctl disable openvpn@client1.service wg-quick@tun0.service
+
+    # Удаление конфигурационных каталогов и файлов
+    rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dnsmasq.conf
+    rm -f /etc/netplan/01-network-manager-all.yaml
+    rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
+
+    # Удаление пакетов OpenVPN и WireGuard (опционально)
+    apt-get purge -y openvpn wireguard
+    apt-get autoremove -y
+
+    # Очистка iptables
+    iptables -t nat -D POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE 2>/dev/null
+    iptables-save > /etc/iptables/rules.v4
+
+    log_info "Все настройки удалены. Вы можете запустить установку заново."
+}
+
+# --- Основная часть скрипта ---
+check_root
+
+# Баннер и выбор действия
 echo ""
-echo "[*] Установка Завершена!"
+echo "=============================================="
+echo "  Установка VPN-сервера с веб-интерфейсом (v1.0)"
+echo "=============================================="
 echo ""
-echo "Вы можете перейти на свой локальный сайт для легкой установки конфига"
-echo "Например: ссылка http://$local_ip/ для входа на ваш сайт с локальной сети"
-echo "Удачи ^_^"
+echo "Выберите действие:"
+echo "1) Установить и настроить сервер"
+echo "2) Удалить все настройки сервера"
 echo ""
+read -p "Ваш выбор [1/2]: " action_choice
+
+if [ "$action_choice" == "2" ]; then
+    remove_configuration
+    exit 0
+elif [ "$action_choice" != "1" ]; then
+    log_error "Неверный выбор. Выберите 1 или 2."
+    exit 1
+fi
+
+# Выполнение установки
+install_packages
+select_interfaces
+configure_netplan
+configure_dns
+configure_ssh
+configure_dhcp
+configure_iptables
+configure_vpn
+configure_web_interface
+
+log_info "Установка завершена успешно!"
+echo ""
+echo "После перезагрузки сервера все настройки будут применены."
+echo "Удачи!"
+
+exit 0
