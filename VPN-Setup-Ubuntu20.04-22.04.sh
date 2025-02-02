@@ -29,12 +29,21 @@ install_packages() {
     apt-get update
     apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn \
       apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload \
-      libapache2-mod-php wget ufw openvswitch-switch
+      libapache2-mod-php wget ufw
     if [ $? -ne 0 ]; then
         log_error "Ошибка установки пакетов. Проверьте доступ к интернету и повторите попытку."
         exit 1
     fi
+
+    # Если пакет openvswitch-switch установлен, остановим его, отключим автозапуск и удалим
+    if dpkg -l | grep -q openvswitch-switch; then
+        log_info "Обнаружен пакет openvswitch-switch, выполняю его удаление..."
+        systemctl stop openvswitch-switch
+        systemctl disable openvswitch-switch
+        apt-get purge -y openvswitch-switch
+    fi
 }
+
 
 # Функция получения списка сетевых интерфейсов и выбора входящего и исходящего
 select_interfaces() {
