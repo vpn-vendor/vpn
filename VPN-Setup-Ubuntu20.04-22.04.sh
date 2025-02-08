@@ -27,6 +27,7 @@ check_root() {
 install_packages() {
     log_info "Обновление репозиториев и установка необходимых пакетов..."
     apt-get update
+    apt-get upgrade -y
     apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn \
       apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload \
       libapache2-mod-php wget ufw
