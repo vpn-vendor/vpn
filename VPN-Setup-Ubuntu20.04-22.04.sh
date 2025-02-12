@@ -28,9 +28,7 @@ install_packages() {
     log_info "Обновление репозиториев и установка необходимых пакетов..."
     apt-get update
     apt-get upgrade -y
-    apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn \
-      apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload \
-      libapache2-mod-php wget ufw
+    apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw
     if [ $? -ne 0 ]; then
         log_error "Ошибка установки пакетов. Проверьте доступ к интернету и повторите попытку."
         exit 1
