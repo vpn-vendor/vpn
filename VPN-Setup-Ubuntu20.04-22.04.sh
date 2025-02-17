@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
-# Поддержка Ubuntu 20.04 и 22.04 (чистая установка)
-# Версия: 1.0 
+# Поддержка Ubuntu 20.04, 22.04, 24.04 (чистая установка)
+# Версия: 1.1 
 # =============================================================================
 
 # Логи вывод
@@ -9,12 +9,12 @@ log_info() {
     echo -e "[INFO] $1"
 }
 
-# логи ошибок
+# Логи ошибок
 log_error() {
     echo -e "[ERROR] $1" >&2
 }
 
-# Проверка рут
+# Проверка прав root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
         log_error "Скрипт должен быть запущен с правами root (через sudo или от root)."
@@ -22,18 +22,19 @@ check_root() {
     fi
 }
 
-# Установщик
+# Установщик пакетов
 install_packages() {
     log_info "Обновление репозиториев и установка необходимых пакетов..."
     apt-get update
     apt-get upgrade -y
-    apt-get install -y htop net-tools mtr dnsmasq network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw
+    # Обратите внимание: заменили dnsmasq на isc-dhcp-server
+    apt-get install -y htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw isc-dhcp-server
     if [ $? -ne 0 ]; then
         log_error "Ошибка установки пакетов. Проверьте доступ к интернету и повторите попытку."
         exit 1
     fi
 
-    # обнаружение openvswitch-switch и удаление
+    # Обнаружение openvswitch-switch и его удаление
     if dpkg -l | grep -q openvswitch-switch; then
         log_info "Обнаружен пакет openvswitch-switch, выполняю его удаление..."
         systemctl stop openvswitch-switch
@@ -42,11 +43,10 @@ install_packages() {
     fi
 }
 
-
 # Получение списка интерфейсов
 select_interfaces() {
     log_info "Получаю список сетевых интерфейсов..."
-    # Вывод списка с айпи адресами
+    # Вывод списка с IP-адресами
     all_interfaces=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://')
     full_list=""
     count=0
@@ -162,12 +162,12 @@ EOF
     log_info "Интернет-соединение успешно установлено."
 }
 
-# DNS
+# Настройка DNS
 configure_dns() {
     log_info "Настраиваю DNS..."
     RESOLV_BASE="/etc/resolvconf/resolv.conf.d/base"
     RESOLV="/etc/resolv.conf"
-    # Добавляем записи (можно изменить при необходимости)
+    # Добавляем записи (при необходимости можно изменить)
     for dns in "nameserver 8.8.8.8" "nameserver 8.8.4.4"; do
         grep -qxF "$dns" "$RESOLV_BASE" || echo "$dns" >> "$RESOLV_BASE"
         grep -qxF "$dns" "$RESOLV" || echo "$dns" >> "$RESOLV"
@@ -177,7 +177,7 @@ configure_dns() {
     log_info "DNS настроены."
 }
 
-# SSH (разрешение root)
+# Настройка SSH (разрешение root-доступа)
 configure_ssh() {
     log_info "Настраиваю SSH (разрешаю root-доступ)..."
     sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -186,51 +186,61 @@ configure_ssh() {
     log_info "SSH настроен."
 }
 
-# DHCP-сервер (dnsmasq)
+# Настройка DHCP-сервера (isc-dhcp-server)
 configure_dhcp() {
-    log_info "Настраиваю DHCP-сервер (dnsmasq)..."
-    CONFIG_FILE="/etc/dnsmasq.conf"
-    # Резервное копирование исходного файла (если существует)
-    [ -f "$CONFIG_FILE" ] && cp "$CONFIG_FILE" "${CONFIG_FILE}.bak"
+    log_info "Настраиваю DHCP-сервер (isc-dhcp-server)..."
+    DHCP_CONF="/etc/dhcp/dhcpd.conf"
+    DHCP_DEFAULT="/etc/default/isc-dhcp-server"
 
-    cat <<EOF > "$CONFIG_FILE"
-dhcp-authoritative
-domain=local.lan
-listen-address=127.0.0.1,$LOCAL_IP
-dhcp-range=${LOCAL_IP%.*}.2,${LOCAL_IP%.*}.254,255.255.255.0,12h
-server=8.8.8.8
-server=8.8.4.4
-cache-size=10000
+    # Резервное копирование исходного файла конфигурации (если существует)
+    [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak"
+
+    cat <<EOF > "$DHCP_CONF"
+default-lease-time 600;
+max-lease-time 7200;
+authoritative;
+subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
+    range ${LOCAL_IP%.*}.2 ${LOCAL_IP%.*}.254;
+    option routers $LOCAL_IP;
+    option subnet-mask 255.255.255.0;
+    option domain-name "local.lan";
+    option domain-name-servers 8.8.8.8, 8.8.4.4;
+}
 EOF
 
-    systemctl stop systemd-resolved
-    systemctl disable systemd-resolved
-    systemctl restart dnsmasq
-    systemctl enable dnsmasq
+    # Обновляем интерфейс, на котором будет работать DHCP-сервер
+    if grep -q "^INTERFACESv4=" "$DHCP_DEFAULT"; then
+        sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$OUT_IF\"/" "$DHCP_DEFAULT"
+    else
+        echo "INTERFACESv4=\"$OUT_IF\"" >> "$DHCP_DEFAULT"
+    fi
+
+    systemctl restart isc-dhcp-server
+    systemctl enable isc-dhcp-server
     log_info "DHCP-сервер настроен."
 }
 
-# Iptables и NAT
+# Настройка iptables и NAT
 configure_iptables() {
     log_info "Настраиваю iptables (MASQUERADE)..."
     # Разрешаем пересылку пакетов
     sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
     sysctl -p
 
-    # Добавляем правило NAT для интерфейса (предполагается, что VPN-интерфейс будет называться tun0)
+    # Добавляем правило NAT для VPN-интерфейса (предполагается, что VPN-интерфейс называется tun0)
     iptables -t nat -A POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE
     iptables-save > /etc/iptables/rules.v4
     log_info "iptables настроены."
 }
 
-# VPN
+# Настройка VPN (OpenVPN)
 configure_vpn() {
     log_info "Настраиваю VPN (OpenVPN)..."
     sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
     log_info "VPN настроен."
 }
 
-# Веб-интерфейс
+# Настройка веб-интерфейса
 configure_web_interface() {
     log_info "Настраиваю веб-интерфейс для управления VPN..."
 
@@ -238,7 +248,7 @@ configure_web_interface() {
     chmod -R 755 /etc/openvpn /etc/wireguard
     chown -R www-data:www-data /etc/openvpn /etc/wireguard
 
-    # Добавляем разрешения для пользователя www-data (запись sudoers)
+    # Добавляем разрешения для пользователя www-data (запись в sudoers)
     cat <<EOF >> /etc/sudoers
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl start openvpn*
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable openvpn*, /bin/systemctl disable openvpn*
@@ -252,9 +262,9 @@ www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@tun0*
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable wg-quick@tun0*
 EOF
 
-echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
-echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | sudo tee -a /etc/sudoers
+    echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
+    echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
+    echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | sudo tee -a /etc/sudoers
 
     # Открываем порт 80 в iptables и сохраняем правила
     iptables -A INPUT -p tcp --dport 80 -j ACCEPT
@@ -286,16 +296,16 @@ remove_configuration() {
     log_info "Удаляю ранее настроенные компоненты..."
 
     # Остановка служб
-    systemctl stop openvpn@client1.service wg-quick@tun0.service dnsmasq apache2 2>/dev/null
+    systemctl stop openvpn@client1.service wg-quick@tun0.service isc-dhcp-server apache2 2>/dev/null
     systemctl disable openvpn@client1.service wg-quick@tun0.service
 
     # Удаление конфигурационных каталогов и файлов
-    rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dnsmasq.conf
+    rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dhcp/dhcpd.conf
     rm -f /etc/netplan/01-network-manager-all.yaml
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
 
     # Удаление пакетов OpenVPN и WireGuard (опционально)
-    apt-get purge -y openvpn wireguard
+    apt-get purge -y openvpn wireguard isc-dhcp-server
     apt-get autoremove -y
 
     # Очистка iptables
@@ -319,7 +329,7 @@ echo "      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :
 echo "       :~!77!~            7P             :??????J^                                                  "
 echo ""
 echo "=============================================="
-echo "  Установка VPN-сервера с веб-интерфейсом (v1.0)"
+echo "  Установка VPN-сервера с веб-интерфейсом (v1.1)"
 echo "=============================================="
 echo ""
 echo "Выберите действие:"
