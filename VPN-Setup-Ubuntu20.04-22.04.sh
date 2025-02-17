@@ -162,7 +162,7 @@ EOF
     log_info "Интернет-соединение успешно установлено."
 }
 
-# Функция настройки DNS
+# DNS
 configure_dns() {
     log_info "Настраиваю DNS..."
     RESOLV_BASE="/etc/resolvconf/resolv.conf.d/base"
@@ -177,7 +177,7 @@ configure_dns() {
     log_info "DNS настроены."
 }
 
-# Функция настройки SSH (разрешение root)
+# SSH (разрешение root)
 configure_ssh() {
     log_info "Настраиваю SSH (разрешаю root-доступ)..."
     sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
@@ -186,7 +186,7 @@ configure_ssh() {
     log_info "SSH настроен."
 }
 
-# Функция настройки DHCP-сервера (dnsmasq)
+# DHCP-сервер (dnsmasq)
 configure_dhcp() {
     log_info "Настраиваю DHCP-сервер (dnsmasq)..."
     CONFIG_FILE="/etc/dnsmasq.conf"
@@ -210,7 +210,7 @@ EOF
     log_info "DHCP-сервер настроен."
 }
 
-# Функция настройки iptables и NAT
+# Iptables и NAT
 configure_iptables() {
     log_info "Настраиваю iptables (MASQUERADE)..."
     # Разрешаем пересылку пакетов
@@ -223,26 +223,38 @@ configure_iptables() {
     log_info "iptables настроены."
 }
 
-# Функция настройки VPN (открываем автозапуск OpenVPN)
+# VPN
 configure_vpn() {
     log_info "Настраиваю VPN (OpenVPN)..."
     sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
     log_info "VPN настроен."
 }
 
-# Функция настройки веб-интерфейса
+# Веб-интерфейс
 configure_web_interface() {
     log_info "Настраиваю веб-интерфейс для управления VPN..."
 
-    # Изменяем права доступа к конфигурационным каталогам
+    # Изменяем права доступа к каталогам
     chmod -R 755 /etc/openvpn /etc/wireguard
     chown -R www-data:www-data /etc/openvpn /etc/wireguard
 
     # Добавляем разрешения для пользователя www-data (запись sudoers)
     cat <<EOF >> /etc/sudoers
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl start openvpn*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable openvpn*, /bin/systemctl disable openvpn*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart openvpn@client1*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl start openvpn@client1*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable openvpn@client1*
 www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick*, /bin/systemctl start wg-quick*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable wg-quick*, /bin/systemctl disable wg-quick*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart wg-quick@tun0*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@tun0*
+www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable wg-quick@tun0*
 EOF
+
+echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
+echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | sudo tee -a /etc/sudoers
 
     # Открываем порт 80 в iptables и сохраняем правила
     iptables -A INPUT -p tcp --dport 80 -j ACCEPT
