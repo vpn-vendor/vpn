@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
-# Поддержка Ubuntu 20.04, 22.04, 24.04 (чистая установка)
-# Версия: 1.1 
+# Поддержка Ubuntu 20.04 и 22.04 (чистая установка)
+# Версия: 1.2 
 # =============================================================================
 
 # Логи вывод
@@ -27,11 +27,18 @@ install_packages() {
     log_info "Обновление репозиториев и установка необходимых пакетов..."
     apt-get update
     apt-get upgrade -y
-    # Обратите внимание: заменили dnsmasq на isc-dhcp-server
     apt-get install -y htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw isc-dhcp-server
     if [ $? -ne 0 ]; then
         log_error "Ошибка установки пакетов. Проверьте доступ к интернету и повторите попытку."
         exit 1
+    fi
+
+    # Удаляем dnsmasq, если он установлен, чтобы не было конфликтов с isc-dhcp-server
+    if dpkg -l | grep -qw dnsmasq; then
+        log_info "Обнаружен пакет dnsmasq, выполняю его удаление..."
+        systemctl stop dnsmasq 2>/dev/null
+        systemctl disable dnsmasq 2>/dev/null
+        apt-get purge -y dnsmasq
     fi
 
     # Обнаружение openvswitch-switch и его удаление
@@ -299,12 +306,20 @@ remove_configuration() {
     systemctl stop openvpn@client1.service wg-quick@tun0.service isc-dhcp-server apache2 2>/dev/null
     systemctl disable openvpn@client1.service wg-quick@tun0.service
 
+    # Удаление dnsmasq, если он установлен
+    if dpkg -l | grep -qw dnsmasq; then
+        log_info "Обнаружен пакет dnsmasq, выполняю его удаление..."
+        systemctl stop dnsmasq 2>/dev/null
+        systemctl disable dnsmasq 2>/dev/null
+        apt-get purge -y dnsmasq
+    fi
+
     # Удаление конфигурационных каталогов и файлов
     rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dhcp/dhcpd.conf
     rm -f /etc/netplan/01-network-manager-all.yaml
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
 
-    # Удаление пакетов OpenVPN и WireGuard (опционально)
+    # Удаление пакетов OpenVPN, WireGuard и isc-dhcp-server (опционально)
     apt-get purge -y openvpn wireguard isc-dhcp-server
     apt-get autoremove -y
 
@@ -329,7 +344,7 @@ echo "      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :
 echo "       :~!77!~            7P             :??????J^                                                  "
 echo ""
 echo "=============================================="
-echo "  Установка VPN-сервера с веб-интерфейсом (v1.1)"
+echo "  Установка VPN-сервера с веб-интерфейсом (v1.2)"
 echo "=============================================="
 echo ""
 echo "Выберите действие:"
