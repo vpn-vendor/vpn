@@ -22,7 +22,7 @@ wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN.sh -O V
 Скрипт выполняет автоматическое обновление системы и установка таких программ:
 - htop
 - net-tools
-- dnsmasq
+- isc-dhcp-server
 - network-manager
 - speedtest-cli
 - nload
