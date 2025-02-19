@@ -10,6 +10,9 @@
 # Установка
 Скопируйте эту комнду и следуйте инструкциям чтобы выполнить скрипт на своем оборудовании:
 ```bash
+cd ~
+```
+```bash
 wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN-Setup-Ubuntu20.04-22.04.sh -O VPN-Setup-Ubuntu20.04-22.04.sh && sudo bash VPN-Setup-Ubuntu20.04-22.04.sh
 ```
 
