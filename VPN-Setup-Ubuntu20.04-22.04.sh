@@ -62,23 +62,34 @@ install_packages() {
         openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw isc-dhcp-server || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
 
-    # Если установлен dnsmasq – удаляем его
-    if dpkg -l | grep -qw dnsmasq; then
-        log_info "Удаление dnsmasq"
-        systemctl stop dnsmasq 2>/dev/null
-        systemctl disable dnsmasq 2>/dev/null
-        apt-get purge -y dnsmasq || error_exit "Не удалось удалить dnsmasq"
-        log_info "dnsmasq удалён"
-    fi
+# Если установлен dnsmasq – удаляем его
+if dpkg -l | grep -qw dnsmasq; then
+    log_info "Удаление dnsmasq"
+    systemctl stop dnsmasq 2>/dev/null
+    systemctl disable dnsmasq 2>/dev/null
+    
+    apt-get purge -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        dnsmasq || error_exit "Не удалось удалить dnsmasq"
+    
+    log_info "dnsmasq удалён"
+fi
 
-    # Если обнаружен openvswitch-switch – удаляем его
-    if dpkg -l | grep -q openvswitch-switch; then
-        log_info "Удаление openvswitch-switch"
-        systemctl stop openvswitch-switch
-        systemctl disable openvswitch-switch
-        apt-get purge -y openvswitch-switch || error_exit "Не удалось удалить openvswitch-switch"
-        log_info "openvswitch-switch удалён"
-    fi
+# Если обнаружен openvswitch-switch – удаляем его
+if dpkg -l | grep -q openvswitch-switch; then
+    log_info "Удаление openvswitch-switch"
+    systemctl stop openvswitch-switch
+    systemctl disable openvswitch-switch
+    
+    apt-get purge -y \
+        -o Dpkg::Options::="--force-confdef" \
+        -o Dpkg::Options::="--force-confold" \
+        openvswitch-switch || error_exit "Не удалось удалить openvswitch-switch"
+    
+    log_info "openvswitch-switch удалён"
+fi
+
 }
 
 # Получение списка сетевых интерфейсов и выбор пользователем
