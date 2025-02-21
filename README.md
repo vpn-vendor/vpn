@@ -16,11 +16,6 @@ cd ~
 wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN-Setup-Ubuntu20.04-22.04.sh -O VPN-Setup-Ubuntu20.04-22.04.sh && sudo bash VPN-Setup-Ubuntu20.04-22.04.sh
 ```
 
-Есть более укороченная команда
-```bash
-wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN.sh -O VPN.sh && sudo bash VPN.sh
-```
-
 # Программы
 Скрипт выполняет автоматическое обновление системы и установка таких программ:
 - htop
@@ -38,6 +33,10 @@ wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN.sh -O V
 - openssh-server
 - resolvconf
 - ufw
+
+Скрипт так же выполняет удаление таких программ в случае обнаружения:
+- dnsmasq
+- openvswitch-switch
 
 # Контакты и сотрудничество
 Всегда готов обсудить условия для работы с вами и вашими решениями.
