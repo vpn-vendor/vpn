@@ -59,8 +59,15 @@ install_packages() {
     
     apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
         htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent \
-        openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw isc-dhcp-server || error_exit "Установка необходимых пакетов не выполнена"
+        openssh-server resolvconf speedtest-cli nload libapache2-mod-php wget ufw isc-dhcp-server \
+        libapache2-mod-authnz-pam shellinabox dos2unix || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
+    # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
+    a2enmod proxy || error_exit "Не удалось включить модуль proxy"
+    a2enmod proxy_http || error_exit "Не удалось включить модуль proxy_http"
+    a2enmod rewrite || error_exit "Не удалось включить модуль rewrite"
+    a2enmod authnz_pam || error_exit "Не удалось включить модуль authnz_pam"
+    systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после включения модулей"
 
 # Если установлен dnsmasq – удаляем его
 if dpkg -l | grep -qw dnsmasq; then
@@ -276,50 +283,212 @@ configure_vpn() {
 # Настройка веб-интерфейса
 configure_web_interface() {
     log_info "Настраиваю веб-интерфейс для управления VPN"
+    # Устанавливаем корректные права на директории конфигурации
     chmod -R 755 /etc/openvpn /etc/wireguard
     chown -R www-data:www-data /etc/openvpn /etc/wireguard
 
-    cat <<EOF >> /etc/sudoers
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop openvpn*, /bin/systemctl start openvpn*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable openvpn*, /bin/systemctl disable openvpn*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart openvpn@client1*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl start openvpn@client1*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable openvpn@client1*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl stop wg-quick*, /bin/systemctl start wg-quick*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl enable wg-quick*, /bin/systemctl disable wg-quick*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl restart wg-quick@tun0*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl start wg-quick@tun0*
-www-data ALL=(ALL) NOPASSWD: /bin/systemctl disable wg-quick@tun0*
-EOF
+    # Для sudo-пользователей (при необходимости)
+    echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | tee -a /etc/sudoers
+    echo "www-data ALL=(ALL) NOPASSWD: ALL" | tee -a /etc/sudoers
+    echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | tee -a /etc/sudoers
 
-    echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | sudo tee -a /etc/sudoers
-    echo "www-data ALL=(ALL) NOPASSWD: ALL" | sudo tee -a /etc/sudoers
-    echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | sudo tee -a /etc/sudoers
-
-    iptables -A INPUT -p tcp --dport 80 -j ACCEPT || error_exit "Не удалось открыть порт 80"
-    iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
-
+    # Клонируем обновлённый сайт (репозиторий web-cabinet)
     rm -rf /var/www/html
-    git clone https://github.com/Rostarc/VPN-Web-Installer.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-интерфейса"
+    git clone https://github.com/Rostarc/web-cabinet.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-сайта"
     chown -R www-data:www-data /var/www/html
     chmod -R 755 /var/www/html
+    log_info "Веб-сайт склонирован в /var/www/html"
+}
 
-    cat <<EOF > /var/www/html/.htaccess
+#############################################
+# Новые функции для дополнительных настроек #
+#############################################
+
+# Функция настройки виртуального хоста Apache и базовой аутентификации
+configure_apache() {
+    log_info "Настраиваю виртуальный хост Apache и базовую аутентификацию"
+
+    # Запрашиваем у пользователя логин и пароль для доступа к сайту
+    read -p "Введите логин для доступа к сайту: " BASIC_AUTH_USER
+    read -s -p "Введите пароль для доступа к сайту: " BASIC_AUTH_PASS
+    echo ""
+    htpasswd -cb /etc/apache2/.htpasswd "$BASIC_AUTH_USER" "$BASIC_AUTH_PASS" || error_exit "Не удалось создать файл .htpasswd"
+    log_info "Файл .htpasswd создан"
+
+    # Формируем новый конфиг виртуального хоста
+    cat <<EOF > /etc/apache2/sites-available/000-default.conf
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+
+    # Прокси для Shell In A Box
+    ProxyPass /shell/ http://127.0.0.1:4200/
+    ProxyPassReverse /shell/ http://127.0.0.1:4200/
+
+    <Directory "/var/www/html">
+        AuthType Basic
+        AuthName "Restricted Content"
+        AuthUserFile /etc/apache2/.htpasswd
+        Require valid-user
+    </Directory>
+</VirtualHost>
+EOF
+    log_info "Конфигурация виртуального хоста Apache записана в /etc/apache2/sites-available/000-default.conf"
+
+    # Настраиваем .htaccess в /var/www/html
+    cat <<'EOF' > /var/www/html/.htaccess
+AuthType Basic
+AuthName "Restricted Area"
+AuthUserFile /etc/apache2/.htpasswd
+Require valid-user
+
 <RequireAll>
     Require ip 192.168
 </RequireAll>
+
+RewriteEngine On
+# Не трогаем URL начинающиеся с /shell/
+RewriteCond %{REQUEST_URI} !^/shell/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php?page=$1 [QSA,L]
+EOF
+    log_info ".htaccess создан и настроен в /var/www/html"
+
+    # Изменяем в /etc/apache2/apache2.conf блок для /var/www/ (AllowOverride)
+    sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf || error_exit "Не удалось изменить AllowOverride в apache2.conf"
+    log_info "Обновлён /etc/apache2/apache2.conf: AllowOverride для /var/www/ теперь All"
+
+    systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после внесения изменений"
+    log_info "Apache перезапущен"
+}
+
+# Функция настройки Shell In A Box (для SSH консоли)
+configure_shellinabox() {
+    log_info "Настраиваю Shell In A Box"
+    # Устанавливаем shellinabox (если ещё не установлен)
+    apt-get install -y shellinabox || error_exit "Не удалось установить shellinabox"
+    systemctl enable shellinabox
+    systemctl start shellinabox
+
+    # Переопределяем конфигурацию в /etc/default/shellinabox для рабочего варианта
+    cat <<EOF > /etc/default/shellinabox
+# Should shellinaboxd start automatically
+SHELLINABOX_DAEMON_START=1
+
+# TCP port that shellinaboxd's webserver listens on
+SHELLINABOX_PORT=4200
+
+# Параметры: отключаем SSL, отключаем звуковой сигнал
+SHELLINABOX_ARGS="--no-beep --disable-ssl"
+EOF
+    systemctl restart shellinabox || error_exit "Не удалось перезапустить shellinabox"
+    log_info "Shell In A Box настроен и перезапущен"
+}
+
+# Функция настройки демона пинга и сбора системных показателей
+configure_ping_daemon() {
+    log_info "Настраиваю демон пинга и сбора системных показателей"
+
+    # Создаём скрипт демона
+    cat <<'EOF' > /usr/local/bin/ping_daemon.sh
+#!/bin/bash
+# Расширенный демон для сбора пинга и системных показателей
+
+# Пути к лог-файлам
+PING_LOG="/var/log/ping_history.log"
+SYS_STATS_LOG="/var/log/sys_stats.log"
+HOST="google.com"
+MAX_ENTRIES=2000  # Максимальное количество записей в каждом логе
+
+# Если лог-файлы не существуют, создаём их
+[ ! -f "$PING_LOG" ] && touch "$PING_LOG"
+[ ! -f "$SYS_STATS_LOG" ] && touch "$SYS_STATS_LOG"
+
+while true; do
+  # --- Сбор данных пинга ---
+  ping_output=$(ping -c 1 -w 5 "$HOST" 2>&1)
+  ping_time=-1
+  if [[ "$ping_output" =~ time=([0-9]+\.[0-9]+) ]]; then
+    ping_time="${BASH_REMATCH[1]}"
+  fi
+  ts=$(date +%s)
+  echo "$ts $ping_time" >> "$PING_LOG"
+  # Если в логе слишком много строк, удаляем первую (FIFO)
+  if [ $(wc -l < "$PING_LOG") -gt "$MAX_ENTRIES" ]; then
+    sed -i '1d' "$PING_LOG"
+  fi
+
+  # --- Сбор системных показателей ---
+  # CPU: Получаем значение user CPU (например, "15.3 us")
+  cpu_line=$(top -b -n1 | grep "Cpu(s)")
+  cpu_usage=0
+  if [[ "$cpu_line" =~ ([0-9]+\.[0-9]+)[[:space:]]*us ]]; then
+    cpu_usage="${BASH_REMATCH[1]}"
+  fi
+
+  # RAM: Используем free -m (вторая строка с "Mem:")
+  free_output=$(free -m)
+  ram_total=$(echo "$free_output" | awk '/Mem:/ {print $2}')
+  ram_used=$(echo "$free_output" | awk '/Mem:/ {print $3}')
+  ram_usage=0
+  if [ "$ram_total" -gt 0 ]; then
+    ram_usage=$(echo "scale=1; $ram_used*100/$ram_total" | bc)
+  fi
+
+  # Disk: Используем df -h /, получаем процент использования (обычно в 5-м столбце)
+  df_line=$(df -h / | tail -1)
+  disk_perc=$(echo "$df_line" | awk '{print $5}' | sed 's/%//')
+
+  # Записываем системные показатели в лог в формате:
+  # timestamp cpu_usage ram_usage disk_percentage
+  echo "$ts $cpu_usage $ram_usage $disk_perc" >> "$SYS_STATS_LOG"
+  if [ $(wc -l < "$SYS_STATS_LOG") -gt "$MAX_ENTRIES" ]; then
+    sed -i '1d' "$SYS_STATS_LOG"
+  fi
+
+  sleep 10
+done
 EOF
 
-    a2enmod rewrite || error_exit "Не удалось включить модуль rewrite для Apache"
-    systemctl restart apache2 || error_exit "Не удалось перезапустить Apache"
+    chmod +x /usr/local/bin/ping_daemon.sh || error_exit "Не удалось сделать ping_daemon.sh исполняемым"
+
+    # Создаём systemd unit для демона
+    cat <<EOF > /etc/systemd/system/ping_daemon.service
+[Unit]
+Description=Ping Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/ping_daemon.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload || error_exit "Не удалось перезагрузить демоны systemd"
+    systemctl enable ping_daemon.service || error_exit "Не удалось включить ping_daemon.service"
+    systemctl start ping_daemon.service || error_exit "Не удалось запустить ping_daemon.service"
+    log_info "Демон пинга и системных показателей настроен и запущен"
+}
+
+# Функция финальных доработок (права на папки, создание файла заметок)
+finalize_setup() {
+    log_info "Выполняю финальные доработки"
+    chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
+    touch /var/www/html/interface_notes.txt || log_error "Не удалось создать /var/www/html/interface_notes.txt"
+    chmod 777 /var/www/html/interface_notes.txt || log_error "Не удалось установить права для /var/www/html/interface_notes.txt"
     log_info "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
 }
 
-# Функция удаления настроек (откат)
+# Функция удаления настроек (откат) – можно расширить для удаления новых компонентов
 remove_configuration() {
     log_info "Удаляю ранее настроенные компоненты"
-    systemctl stop openvpn@client1.service wg-quick@tun0.service isc-dhcp-server apache2 2>/dev/null
-    systemctl disable openvpn@client1.service wg-quick@tun0.service
+    systemctl stop openvpn@client1.service wg-quick@tun0.service isc-dhcp-server apache2 shellinabox ping_daemon.service 2>/dev/null
+    systemctl disable openvpn@client1.service wg-quick@tun0.service ping_daemon.service
     if dpkg -l | grep -qw dnsmasq; then
         log_info "Удаление dnsmasq"
         systemctl stop dnsmasq 2>/dev/null
@@ -330,7 +499,7 @@ remove_configuration() {
     rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dhcp/dhcpd.conf
     rm -f /etc/netplan/01-network-manager-all.yaml
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
-    apt-get purge -y openvpn wireguard isc-dhcp-server || log_error "Не удалось удалить пакеты OpenVPN, WireGuard или isc-dhcp-server"
+    apt-get purge -y openvpn wireguard isc-dhcp-server shellinabox || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
     apt-get autoremove -y
     iptables -t nat -D POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
@@ -357,13 +526,18 @@ check_execution() {
     else
         error_exit "Apache2 не запущен"
     fi
-    # Проверка наличия выбранного входящего интерфейса
+    # Проверка работы shellinabox
+    if systemctl is-active --quiet shellinabox; then
+        log_info "Shell In A Box запущен"
+    else
+        error_exit "Shell In A Box не запущен"
+    fi
+    # Проверка наличия выбранных интерфейсов
     if ip link show "$IN_IF" >/dev/null 2>&1; then
         log_info "Интерфейс $IN_IF обнаружен"
     else
         error_exit "Интерфейс $IN_IF не обнаружен"
     fi
-    # Проверка наличия выбранного исходящего интерфейса
     if ip link show "$OUT_IF" >/dev/null 2>&1; then
         log_info "Интерфейс $OUT_IF обнаружен"
     else
@@ -412,6 +586,10 @@ configure_dhcp
 configure_iptables
 configure_vpn
 configure_web_interface
+configure_apache
+configure_shellinabox
+configure_ping_daemon
+finalize_setup
 
 # Финальная проверка с анимацией
 check_execution
@@ -419,6 +597,7 @@ check_execution
 echo -e "\n${GREEN}[OK]${NC} Установка завершена успешно!"
 echo ""
 echo "После перезагрузки сервера все настройки будут применены."
+echo "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
 echo "Удачи!"
 
 exit 0
