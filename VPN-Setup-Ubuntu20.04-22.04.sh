@@ -332,16 +332,23 @@ EOF
 
     # Настраиваем .htaccess в /var/www/html
     cat <<'EOF' > /var/www/html/.htaccess
-
 <RequireAll>
     Require ip 192.168
 </RequireAll>
 
 RewriteEngine On
-# Не трогаем URL начинающиеся с /shell/
-RewriteCond %{REQUEST_URI} !^/shell/
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
+RewriteBase /
+
+# Исключаем каталог elfinder из перенаправлений
+RewriteCond %{REQUEST_URI} ^/elfinder/ [NC]
+RewriteRule .* - [L]
+
+# Если запрошен существующий файл или каталог — не перенаправляем
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Перенаправляем все остальные запросы на index.php с параметром page
 RewriteRule ^(.*)$ index.php?page=$1 [QSA,L]
 EOF
     log_info ".htaccess создан и настроен в /var/www/html"
