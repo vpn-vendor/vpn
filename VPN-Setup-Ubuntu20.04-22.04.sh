@@ -339,10 +339,6 @@ EOF
 
     # Настраиваем .htaccess в /var/www/html
     cat <<'EOF' > /var/www/html/.htaccess
-AuthType Basic
-AuthName "Restricted Area"
-AuthUserFile /etc/apache2/.htpasswd
-Require valid-user
 
 <RequireAll>
     Require ip 192.168
