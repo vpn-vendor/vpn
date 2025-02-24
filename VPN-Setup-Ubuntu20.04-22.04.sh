@@ -308,13 +308,6 @@ configure_web_interface() {
 configure_apache() {
     log_info "Настраиваю виртуальный хост Apache и базовую аутентификацию"
 
-    # Запрашиваем у пользователя логин и пароль для доступа к сайту
-    read -p "Введите логин для доступа к сайту: " BASIC_AUTH_USER
-    read -s -p "Введите пароль для доступа к сайту: " BASIC_AUTH_PASS
-    echo ""
-    htpasswd -cb /etc/apache2/.htpasswd "$BASIC_AUTH_USER" "$BASIC_AUTH_PASS" || error_exit "Не удалось создать файл .htpasswd"
-    log_info "Файл .htpasswd создан"
-
     # Формируем новый конфиг виртуального хоста
     cat <<EOF > /etc/apache2/sites-available/000-default.conf
 <VirtualHost *:80>
@@ -479,7 +472,7 @@ finalize_setup() {
     chmod 777 /var/www/html/interface_notes.txt || log_error "Не удалось установить права для /var/www/html/interface_notes.txt"
     sudo chmod +x /var/www/html/scripts/update.sh
     sudo chmod +x /usr/local/bin/ping_daemon.sh
-    log_info "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
+    log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP логин и пароль такой же как и от сервера"
 }
 
 # Функция удаления настроек (откат) – можно расширить для удаления новых компонентов
