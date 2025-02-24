@@ -481,6 +481,8 @@ finalize_setup() {
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
     touch /var/www/html/interface_notes.txt || log_error "Не удалось создать /var/www/html/interface_notes.txt"
     chmod 777 /var/www/html/interface_notes.txt || log_error "Не удалось установить права для /var/www/html/interface_notes.txt"
+    sudo chmod +x /var/www/html/scripts/update.sh
+    sudo chmod +x /usr/local/bin/ping_daemon.sh
     log_info "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
 }
 
