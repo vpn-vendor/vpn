@@ -479,6 +479,8 @@ finalize_setup() {
     chmod 777 /var/www/html/interface_notes.txt || log_error "Не удалось установить права для /var/www/html/interface_notes.txt"
     sudo chmod +x /var/www/html/scripts/update.sh
     sudo chmod +x /usr/local/bin/ping_daemon.sh
+    sudo chown -R www-data:www-data /home
+    sudo chmod -R 777 /home
     log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP логин и пароль такой же как и от сервера"
 }
 
