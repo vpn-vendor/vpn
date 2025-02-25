@@ -62,6 +62,39 @@ install_packages() {
         openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server \
         libapache2-mod-authnz-pam shellinabox dos2unix || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
+PORT=80
+
+echo "Проверка порта $PORT..."
+
+# Получаем список PID, которые слушают TCP на нужном порту
+PIDS=$(lsof -t -i tcp:$PORT)
+
+if [ -n "$PIDS" ]; then
+    echo "Порт $PORT занят процессами: $PIDS"
+    echo "Пытаемся завершить их..."
+    # Завершаем все найденные процессы (SIGKILL)
+    kill -9 $PIDS
+    sleep 1
+    # Повторная проверка
+    PIDS=$(lsof -t -i tcp:$PORT)
+    if [ -n "$PIDS" ]; then
+        echo "Не удалось освободить порт $PORT. Остались процессы: $PIDS"
+        exit 1
+    else
+        echo "Порт $PORT успешно освобожден."
+    fi
+else
+    echo "Порт $PORT свободен."
+fi
+
+# После этого можно запускать Apache
+echo "Перезапускаем Apache..."
+if systemctl restart apache2; then
+    echo "Apache перезапущен успешно."
+else
+    echo "Ошибка при перезапуске Apache."
+    exit 1
+fi
     # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
     a2enmod proxy || error_exit "Не удалось включить модуль proxy"
     a2enmod proxy_http || error_exit "Не удалось включить модуль proxy_http"
