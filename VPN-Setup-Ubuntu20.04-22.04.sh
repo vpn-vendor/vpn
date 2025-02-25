@@ -195,6 +195,7 @@ EOF
         error_exit "Неверный выбор варианта настройки сети"
     fi
 
+    chmod 644 /etc/netplan/01-network-manager-all.yaml
     netplan apply || error_exit "Netplan не был применен"
     log_info "Настройки netplan применены"
     log_info "Проверка доступа в интернет"
