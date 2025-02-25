@@ -222,15 +222,6 @@ configure_dns() {
     log_info "DNS настроены"
 }
 
-# Настройка SSH (разрешение root-доступа)
-configure_ssh() {
-    log_info "Настраиваю SSH (разрешаю root-доступ)"
-    sed -i 's/#\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
-    systemctl restart ssh || systemctl restart sshd || error_exit "Не удалось перезапустить SSH"
-    ufw allow OpenSSH || error_exit "Не удалось разрешить OpenSSH через ufw"
-    log_info "SSH настроен"
-}
-
 # Настройка DHCP-сервера (isc-dhcp-server)
 configure_dhcp() {
     log_info "Настраиваю DHCP-сервер (isc-dhcp-server)"
@@ -581,7 +572,6 @@ install_packages
 select_interfaces
 configure_netplan
 configure_dns
-configure_ssh
 configure_dhcp
 configure_iptables
 configure_vpn
