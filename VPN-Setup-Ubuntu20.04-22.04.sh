@@ -54,47 +54,12 @@ install_packages() {
     log_info "Обновление репозиториев"
     apt-get update || error_exit "Обновление репозиториев не выполнено"
     
-    apt-get upgrade -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" || error_exit "Обновление системы не выполнено"
+    apt-get upgrade -y || error_exit "Обновление системы не выполнено"
     log_info "Обновление системы прошло"
     
-    apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" \
-        htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent \
-        openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server \
-        libapache2-mod-authnz-pam shellinabox dos2unix || error_exit "Установка необходимых пакетов не выполнена"
+    apt-get install -y htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server libapache2-mod-authnz-pam shellinabox dos2unix || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
-PORT=80
 
-echo "Проверка порта $PORT..."
-
-# Получаем список PID, которые слушают TCP на нужном порту
-PIDS=$(lsof -t -i tcp:$PORT)
-
-if [ -n "$PIDS" ]; then
-    echo "Порт $PORT занят процессами: $PIDS"
-    echo "Пытаемся завершить их..."
-    # Завершаем все найденные процессы (SIGKILL)
-    kill -9 $PIDS
-    sleep 1
-    # Повторная проверка
-    PIDS=$(lsof -t -i tcp:$PORT)
-    if [ -n "$PIDS" ]; then
-        echo "Не удалось освободить порт $PORT. Остались процессы: $PIDS"
-        exit 1
-    else
-        echo "Порт $PORT успешно освобожден."
-    fi
-else
-    echo "Порт $PORT свободен."
-fi
-
-# После этого можно запускать Apache
-echo "Перезапускаем Apache..."
-if systemctl restart apache2; then
-    echo "Apache перезапущен успешно."
-else
-    echo "Ошибка при перезапуске Apache."
-    exit 1
-fi
     # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
     a2enmod proxy || error_exit "Не удалось включить модуль proxy"
     a2enmod proxy_http || error_exit "Не удалось включить модуль proxy_http"
@@ -523,9 +488,8 @@ remove_configuration() {
         log_info "dnsmasq удалён"
     fi
     rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dhcp/dhcpd.conf
-    rm -f /etc/netplan/01-network-manager-all.yaml
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
-    apt-get purge -y openvpn wireguard isc-dhcp-server shellinabox || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
+    apt-get purge -y htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server libapache2-mod-authnz-pam shellinabox dos2unix || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
     apt-get autoremove -y
     iptables -t nat -D POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
