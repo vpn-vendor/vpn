@@ -284,6 +284,8 @@ EOF
 
     systemctl restart isc-dhcp-server || error_exit "isc-dhcp-server не был перезапущен"
     systemctl enable isc-dhcp-server || error_exit "isc-dhcp-server не был включён для автозапуска"
+    chown root:dhcpd /var/lib/dhcp/dhcpd.leases
+    chmod 664 /var/lib/dhcp/dhcpd.leases
     log_info "DHCP-сервер настроен"
 }
 
