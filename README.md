@@ -33,7 +33,6 @@ wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN-Setup-U
 - iptables-persistent
 - openssh-server
 - resolvconf
-- ufw
 
 Скрипт так же выполняет удаление таких программ в случае обнаружения:
 - dnsmasq
