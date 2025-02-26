@@ -60,14 +60,6 @@ configure_network_services() {
     systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
     systemctl start systemd-networkd.service || error_exit "Не удалось запустить systemd-networkd"
 
-    # Включаем и запускаем systemd-resolved для DNS
-    systemctl enable systemd-resolved.service || error_exit "Не удалось включить systemd-resolved"
-    systemctl start systemd-resolved.service || error_exit "Не удалось запустить systemd-resolved"
-
-    # Обновляем /etc/resolv.conf на использование systemd-resolved
-    rm -f /etc/resolv.conf
-    ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
-
     # Удаляем старые netplan-конфигурации с renderer NetworkManager 
     rm -f /etc/netplan/*.yml
 
