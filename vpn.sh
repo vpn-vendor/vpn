@@ -226,16 +226,23 @@ EOF
 
 # Настройка DNS
 configure_dns() {
-    log_info "Настраиваю DNS"
-    RESOLV_BASE="/etc/resolvconf/resolv.conf.d/base"
-    RESOLV="/etc/resolv.conf"
-    for dns in "nameserver 8.8.8.8" "nameserver 8.8.4.4"; do
-        grep -qxF "$dns" "$RESOLV_BASE" || echo "$dns" >> "$RESOLV_BASE"
-        grep -qxF "$dns" "$RESOLV" || echo "$dns" >> "$RESOLV"
-    done
-    resolvconf -u || error_exit "Ошибка обновления resolvconf"
+    log_info "Настраиваю DNS через systemd-resolved"
+    RESOLVED_CONF="/etc/systemd/resolved.conf"
+
+    # Поиск [Resolve] и удаление старых DNS= и добавление строк
+    if grep -q "^\[Resolve\]" "$RESOLVED_CONF"; then
+        # Удаляем строки, начинающиеся с DNS= в блоке [Resolve]
+        sed -i '/^\[Resolve\]/,/^\[/ s/^DNS=.*//g' "$RESOLVED_CONF"
+        # Добавляем нужную строку сразу после [Resolve]
+        sed -i '/^\[Resolve\]/a DNS=8.8.8.8 8.8.4.4' "$RESOLVED_CONF"
+    else
+        # Если секция отсутствует, добавляем её в конец файла
+        echo -e "\n[Resolve]\nDNS=8.8.8.8 8.8.4.4" >> "$RESOLVED_CONF"
+    fi
+
+    # Перезапускаем systemd-resolved
     systemctl restart systemd-resolved || error_exit "Не удалось перезапустить systemd-resolved"
-    log_info "DNS настроены"
+    log_info "DNS настроены через systemd-resolved"
 }
 
 # Настройка DHCP-сервера (isc-dhcp-server)
