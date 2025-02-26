@@ -49,6 +49,31 @@ check_root() {
     fi
 }
 
+# Функция переключения сетевого управления на systemd-networkd
+configure_network_services() {
+    log_info "Переключаю сетевое управление на systemd-networkd"
+    # Останавливаем и отключаем NetworkManager
+    systemctl stop NetworkManager.service 2>/dev/null || log_info "NetworkManager не запущен"
+    systemctl disable NetworkManager.service 2>/dev/null || log_info "NetworkManager уже отключен"
+
+    # Включаем и запускаем systemd-networkd
+    systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
+    systemctl start systemd-networkd.service || error_exit "Не удалось запустить systemd-networkd"
+
+    # Включаем и запускаем systemd-resolved для DNS
+    systemctl enable systemd-resolved.service || error_exit "Не удалось включить systemd-resolved"
+    systemctl start systemd-resolved.service || error_exit "Не удалось запустить systemd-resolved"
+
+    # Обновляем /etc/resolv.conf на использование systemd-resolved
+    rm -f /etc/resolv.conf
+    ln -s /run/systemd/resolve/resolv.conf /etc/resolv.conf
+
+    # Удаляем старые netplan-конфигурации с renderer NetworkManager 
+    rm -f /etc/netplan/*.yml
+
+    log_info "Сетевые службы переключены на systemd-networkd"
+}
+
 # Установщик пакетов
 install_packages() {
     log_info "Обновление репозиториев"
@@ -568,6 +593,7 @@ elif [ "$action_choice" != "1" ]; then
 fi
 
 # Выполнение установки и настройки
+configure_network_services
 install_packages
 select_interfaces
 configure_netplan
