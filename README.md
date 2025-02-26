@@ -15,7 +15,7 @@
 cd ~
 ```
 ```bash
-wget https://raw.githubusercontent.com/Rostarc/VPN-Setup-Script/main/VPN-Setup-Ubuntu20.04-22.04.sh -O VPN-Setup-Ubuntu20.04-22.04.sh && sudo bash VPN-Setup-Ubuntu20.04-22.04.sh
+wget https://raw.githubusercontent.com/Rostarc/vpn/main/vpn.sh -O vpn.shh && sudo bash vpn.sh
 ```
 
 # Программы
