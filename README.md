@@ -15,7 +15,7 @@
 cd ~
 ```
 ```bash
-wget https://raw.githubusercontent.com/Rostarc/vpn/main/vpn.sh -O vpn.shh && sudo bash vpn.sh
+wget https://raw.githubusercontent.com/Rostarc/vpn/main/vpn.sh -O vpn.sh && sudo bash vpn.sh
 ```
 
 # Программы
