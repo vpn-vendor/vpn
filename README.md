@@ -20,7 +20,7 @@ wget https://raw.githubusercontent.com/Rostarc/vpn/main/vpn.sh -O vpn.sh && sudo
 ```
 Еще бывает такая проблема -
 "Will not apply HSTS... HSTS database must be a regular and non-world-writable file"
-Испрвляется вот так
+Исправляется она вот так
 ```bash
 rm -f ~/.wget-hsts
 ```
