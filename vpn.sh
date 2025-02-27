@@ -114,6 +114,34 @@ fi
 
 }
 
+preselect_interfaces() {
+    read -p "Изменить настройки сетевых интерфейсов? (y/n): " change_network
+    if [ "$change_network" = "y" ]; then
+        select_interfaces
+        configure_netplan
+    else
+        # Проверка существующего netplan файла
+        netplan_file=$(find /etc/netplan -maxdepth 1 -type f -name "*.yaml" | head -n 1)
+        if [ -z "$netplan_file" ]; then
+            error_exit "Не найден netplan файл с расширением .yaml. Пожалуйста, настройте сетевые интерфейсы вручную."
+        fi
+        if ! grep -q "renderer: networkd" "$netplan_file"; then
+            error_exit "Netplan файл ($netplan_file) не настроен для использования networkd."
+        fi
+        # Попытка извлечения настроек из netplan файла:
+        IN_IF=$(grep -E "^[[:space:]]+[a-zA-Z0-9_-]+:" "$netplan_file" | head -n 1 | awk '{print $1}' | tr -d ':')
+        OUT_IF=$(grep -E "^[[:space:]]+[a-zA-Z0-9_-]+:" "$netplan_file" | sed -n '2p' | awk '{print $1}' | tr -d ':')
+        LOCAL_IP=$(grep -A 5 -E "^[[:space:]]+$OUT_IF:" "$netplan_file" | grep "addresses:" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+        if [ -z "$IN_IF" ] || [ -z "$OUT_IF" ]; then
+            error_exit "Не удалось определить сетевые интерфейсы из netplan файла."
+        fi
+        if [ -z "$LOCAL_IP" ]; then
+            LOCAL_IP="192.168.1.1"
+        fi
+        log_info "Используются текущие настройки интерфейсов: ВХОДЯЩИЙ: $IN_IF, ВЫХОДЯЩИЙ: $OUT_IF, LOCAL_IP: $LOCAL_IP"
+    fi
+}
+
 # Получение списка сетевых интерфейсов и выбор пользователем
 select_interfaces() {
     echo -e "${GREEN}Получаю список сетевых интерфейсов...${NC}"
