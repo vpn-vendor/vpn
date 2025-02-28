@@ -545,7 +545,7 @@ finalize_setup() {
     sudo chmod -R 755 /home/.trash/.tmb/
     sudo mkdir /home/.trash
     sudo mkdir /home/.trash/.tmb/
-    log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP логин и пароль такой же как и от сервера"
+    log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP"
 }
 
 # Функция удаления настроек (откат) – можно расширить для удаления новых компонентов
