@@ -539,6 +539,9 @@ finalize_setup() {
     sudo chmod +x /usr/local/bin/ping_daemon.sh
     sudo chown -R www-data:www-data /home
     sudo chmod -R 777 /home
+    sudo chmod -R 777 /home/.trash/
+    sudo mkdir /home/.trash
+    sudo mkdir /home/.trash/.tmb/
     log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP логин и пароль такой же как и от сервера"
 }
 
