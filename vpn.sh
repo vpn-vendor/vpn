@@ -548,24 +548,51 @@ finalize_setup() {
     log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP"
 }
 
-# Функция удаления настроек (откат) – можно расширить для удаления новых компонентов
+# Удаление и откат изменений
 remove_configuration() {
     log_info "Удаляю ранее настроенные компоненты"
-    systemctl stop openvpn@client1.service wg-quick@tun0.service isc-dhcp-server apache2 shellinabox ping_daemon.service 2>/dev/null
-    systemctl disable openvpn@client1.service wg-quick@tun0.service ping_daemon.service
+
+    # Определяем список сервисов для остановки и отключения
+    services=(
+        "openvpn@client1.service"
+        "wg-quick@tun0.service"
+        "isc-dhcp-server"
+        "apache2"
+        "shellinabox"
+        "ping_daemon.service"
+        "dnsmasq"
+    )
+    for service in "${services[@]}"; do
+        systemctl stop "$service" 2>/dev/null
+        systemctl disable "$service" 2>/dev/null
+    done
+
+    # Если установлен dnsmasq, дополнительно удаляем его
     if dpkg -l | grep -qw dnsmasq; then
         log_info "Удаление dnsmasq"
-        systemctl stop dnsmasq 2>/dev/null
-        systemctl disable dnsmasq 2>/dev/null
         apt-get purge -y dnsmasq || log_error "Не удалось удалить dnsmasq"
         log_info "dnsmasq удалён"
     fi
-    rm -rf /etc/openvpn /etc/wireguard /var/www/html /etc/dhcp/dhcpd.conf
+
+    # Удаляем конфигурационные файлы и директории, связанные с настройкой
+    rm -rf /etc/openvpn /etc/wireguard /var/www/html
+    rm -f /etc/dhcp/dhcpd.conf /etc/default/isc-dhcp-server /var/lib/dhcp/dhcpd.leases
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
-    apt-get purge -y htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server libapache2-mod-authnz-pam shellinabox dos2unix || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
+
+    # Удаляем установленные пакеты
+    apt-get purge -y \
+        htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent \
+        openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server \
+        libapache2-mod-authnz-pam shellinabox dos2unix || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
     apt-get autoremove -y
+
+    # Удаляем правило NAT, если оно было добавлено
     iptables -t nat -D POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
+
+    # Перезагружаем systemd, чтобы изменения в unit-файлах вступили в силу
+    systemctl daemon-reload
+
     log_info "Все настройки удалены"
 }
 
