@@ -261,7 +261,7 @@ EOF
     chmod 600 /etc/netplan/01-network-manager-all.yaml
     netplan apply || error_exit "Netplan не был применен"
     log_info "Настройки netplan применены"
-    log_info "Проверка доступа в интернет"
+    log_info "Запуск проверки интернет соединения"
     sleep 20
     response=$(curl -s -o /dev/null -w "%{http_code}" http://www.google.com)
     if [ "$response" -ne 200 ]; then
