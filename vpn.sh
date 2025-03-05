@@ -262,6 +262,7 @@ EOF
     netplan apply || error_exit "Netplan не был применен"
     log_info "Настройки netplan применены"
     log_info "Запуск проверки интернет соединения"
+    echo "Ожидаю 20 секунд для стабилизации соединения..."
     sleep 20
     response=$(curl -s -o /dev/null -w "%{http_code}" http://www.google.com)
     if [ "$response" -ne 200 ]; then
@@ -545,7 +546,7 @@ finalize_setup() {
     sudo chmod -R 755 /home/.trash/.tmb/
     sudo mkdir /home/.trash
     sudo mkdir /home/.trash/.tmb/
-    log_info "Веб-интерфейс настроен и доступен по http://$LOCAL_IP"
+    log_info "Финальные настройки прав и директорий выполнены"
 }
 
 # Удаление и откат изменений
