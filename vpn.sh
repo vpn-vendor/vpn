@@ -53,8 +53,8 @@ check_root() {
 configure_network_services() {
     log_info "Переключаю сетевое управление на systemd-networkd"
     # Останавливаем и отключаем NetworkManager
-    systemctl stop NetworkManager.service 2>/dev/null || log_info "NetworkManager не запущен"
-    systemctl disable NetworkManager.service 2>/dev/null || log_info "NetworkManager уже отключен"
+    systemctl stop NetworkManager.service 2>/dev/null || log_info "NetworkManager не установлен"
+    systemctl disable NetworkManager.service 2>/dev/null || log_info "NetworkManager не установлен/отключение службы"
 
     # Включаем и запускаем systemd-networkd
     systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
