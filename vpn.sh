@@ -536,6 +536,8 @@ finalize_setup() {
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
     touch /var/www/html/interface_notes.txt || log_error "Не удалось создать /var/www/html/interface_notes.txt"
     chmod 777 /var/www/html/interface_notes.txt || log_error "Не удалось установить права для /var/www/html/interface_notes.txt"
+    sudo mkdir /home/.trash
+    sudo mkdir /home/.trash/.tmb/
     sudo chmod +x /var/www/html/scripts/update.sh
     sudo chmod +x /usr/local/bin/ping_daemon.sh
     sudo chown -R www-data:www-data /home
@@ -544,8 +546,6 @@ finalize_setup() {
     sudo chmod -R 755 /home/
     sudo chmod -R 755 /home/.trash/
     sudo chmod -R 755 /home/.trash/.tmb/
-    sudo mkdir /home/.trash
-    sudo mkdir /home/.trash/.tmb/
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
