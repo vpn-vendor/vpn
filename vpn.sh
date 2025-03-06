@@ -534,18 +534,16 @@ EOF
 finalize_setup() {
     log_info "Выполняю финальные доработки"
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
-    touch /var/www/html/interface_notes.txt || log_error "Не удалось создать /var/www/html/interface_notes.txt"
-    chmod 777 /var/www/html/interface_notes.txt || log_error "Не удалось установить права для /var/www/html/interface_notes.txt"
-    sudo mkdir /home/.trash
-    sudo mkdir /home/.trash/.tmb/
+    sudo mkdir /home/home/files.trash/
+    sudo mkdir /home/home/files.trash/.tmb/
     sudo chmod +x /var/www/html/scripts/update.sh
     sudo chmod +x /usr/local/bin/ping_daemon.sh
-    sudo chown -R www-data:www-data /home
-    sudo chown -R www-data:www-data /home/.trash/
-    sudo chown -R www-data:www-data /home/.trash/.tmb/
-    sudo chmod -R 755 /home/
-    sudo chmod -R 755 /home/.trash/
-    sudo chmod -R 755 /home/.trash/.tmb/
+    sudo chown -R www-data:www-data /home/files
+    sudo chown -R www-data:www-data /home/files.trash/
+    sudo chown -R www-data:www-data /home/files.trash/.tmb/
+    sudo chmod -R 755 /home/files
+    sudo chmod -R 755 /home/files.trash/
+    sudo chmod -R 755 /home/files.trash/.tmb/
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
