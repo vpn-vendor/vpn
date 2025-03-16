@@ -932,7 +932,6 @@ fi
 configure_network_services
 install_packages
 preselect_interfaces
-configure_metrics_services
 configure_dns
 configure_dhcp
 configure_iptables
@@ -941,6 +940,7 @@ configure_web_interface
 configure_apache
 configure_shellinabox
 configure_ping_daemon
+configure_metrics_services
 finalize_setup
 
 # Финальная проверка с анимацией
