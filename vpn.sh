@@ -814,6 +814,7 @@ finalize_setup() {
     sudo chmod -R 755 /home/files/.trash/.tmb/
     sudo chmod -R 755 /var/www/html/data
     sudo usermod -a -G adm www-data
+    sudo systemctl restart apache2
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
