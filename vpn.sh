@@ -791,8 +791,8 @@ EOF
 finalize_setup() {
     log_info "Выполняю финальные доработки"
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
-    sudo mkdir /home/home/files.trash/
-    sudo mkdir /home/home/files.trash/.tmb/
+    sudo mkdir /home/home/files/.trash/
+    sudo mkdir /home/home/files/.trash/.tmb/
     sudo chmod +x /var/www/html/scripts/update.sh
     sudo chmod +x /usr/local/bin/ping_daemon.sh
     sudo chmod +x /var/www/html/api/scan_local_network.py
@@ -802,8 +802,8 @@ finalize_setup() {
     sudo chown -R www-data:www-data /home/files/trash/.tmb/
     sudo chown -R www-data:www-data /var/www/html/data
     sudo chmod -R 755 /home/files
-    sudo chmod -R 755 /home/files/trash/
-    sudo chmod -R 755 /home/files/trash/.tmb/
+    sudo chmod -R 755 /home/files/.trash/
+    sudo chmod -R 755 /home/files/.trash/.tmb/
     sudo chmod -R 755 /var/www/html/data
     sudo usermod -a -G adm www-data
     log_info "Финальные настройки прав и директорий выполнены"
