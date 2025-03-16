@@ -42,6 +42,7 @@ rm -f ~/.wget-hsts
 - iptables-persistent
 - openssh-server
 - resolvconf
+- и другие
 
 Скрипт так же выполняет удаление таких программ в случае обнаружения:
 - dnsmasq
