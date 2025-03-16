@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Поддержка Ubuntu 20.04, 22.04, 24.04, Linux Mint (чистая установка)
-# Версия: 2.1.3
+# Версия: 2.1.4
 # =============================================================================
 
 # Устанавливаем неинтерактивный режим для apt
@@ -84,34 +84,33 @@ install_packages() {
     a2enmod authnz_pam || error_exit "Не удалось включить модуль authnz_pam"
     systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после включения модулей"
 
-# Если установлен dnsmasq – удаляем его
-if dpkg -l | grep -qw dnsmasq; then
-    log_info "Удаление dnsmasq"
-    systemctl stop dnsmasq 2>/dev/null
-    systemctl disable dnsmasq 2>/dev/null
-    
-    apt-get purge -y \
-        -o Dpkg::Options::="--force-confdef" \
-        -o Dpkg::Options::="--force-confold" \
-        dnsmasq || error_exit "Не удалось удалить dnsmasq"
-    
-    log_info "dnsmasq удалён"
-fi
+    # Если установлен dnsmasq – удаляем его
+    if dpkg -l | grep -qw dnsmasq; then
+        log_info "Удаление dnsmasq"
+        systemctl stop dnsmasq 2>/dev/null
+        systemctl disable dnsmasq 2>/dev/null
+        
+        apt-get purge -y \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            dnsmasq || error_exit "Не удалось удалить dnsmasq"
+        
+        log_info "dnsmasq удалён"
+    fi
 
-# Если обнаружен openvswitch-switch – удаляем его
-if dpkg -l | grep -q openvswitch-switch; then
-    log_info "Удаление openvswitch-switch"
-    systemctl stop openvswitch-switch
-    systemctl disable openvswitch-switch
-    
-    apt-get purge -y \
-        -o Dpkg::Options::="--force-confdef" \
-        -o Dpkg::Options::="--force-confold" \
-        openvswitch-switch || error_exit "Не удалось удалить openvswitch-switch"
-    
-    log_info "openvswitch-switch удалён"
-fi
-
+    # Если обнаружен openvswitch-switch – удаляем его
+    if dpkg -l | grep -q openvswitch-switch; then
+        log_info "Удаление openvswitch-switch"
+        systemctl stop openvswitch-switch
+        systemctl disable openvswitch-switch
+        
+        apt-get purge -y \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            openvswitch-switch || error_exit "Не удалось удалить openvswitch-switch"
+        
+        log_info "openvswitch-switch удалён"
+    fi
 }
 
 preselect_interfaces() {
@@ -536,6 +535,258 @@ EOF
     log_info "Демон пинга и системных показателей настроен и запущен"
 }
 
+# Функция настройки метрик и мониторинга
+configure_metrics_services() {
+    log_info "Настраиваю сервисы метрик и мониторинга"
+
+    # --- update_metrics.service ---
+    cat <<EOF > /etc/systemd/system/update_metrics.service
+[Unit]
+Description=Update Metrics Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /var/www/html/api/update_metrics_daemon.py
+WorkingDirectory=/var/www/html/api
+User=www-data
+Group=www-data
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload || error_exit "Ошибка перезагрузки systemd после update_metrics.service"
+    systemctl start update_metrics.service || error_exit "Не удалось запустить update_metrics.service"
+    systemctl enable update_metrics.service || error_exit "Не удалось включить update_metrics.service"
+    log_info "update_metrics.service настроен"
+
+    # --- Установка arp-scan ---
+    apt-get install -y arp-scan || error_exit "Не удалось установить arp-scan"
+
+    # --- scan_local_network.py ---
+    mkdir -p /var/www/html/api
+    cat <<'EOF' > /var/www/html/api/scan_local_network.py
+#!/usr/bin/env python3
+import subprocess
+import json
+import re
+import os
+
+def scan_network(interface):
+    try:
+        # Запускаем arp-scan для указанного интерфейса
+        result = subprocess.run(['sudo', 'arp-scan', '--interface=' + interface, '--localnet'],
+                                capture_output=True, text=True, timeout=30)
+        output = result.stdout
+    except Exception as e:
+        return {"error": str(e)}
+    
+    devices = []
+    # Пример строки: "192.168.1.10    00:11:22:33:44:55    Some Vendor Inc."
+    pattern = re.compile(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f:]+)\s+(.*)')
+    for line in output.splitlines():
+        m = pattern.match(line)
+        if m:
+            ip = m.group(1)
+            mac = m.group(2)
+            vendor = m.group(3).strip()
+            devices.append({"ip": ip, "mac": mac, "vendor": vendor})
+    return {"devices": devices}
+
+if __name__ == '__main__':
+    # Используем переменную окружения OUT_IF, если она не задана, по умолчанию "enp0s8"
+    interface = os.environ.get("OUT_IF", "enp0s8")
+    data = scan_network(interface)
+    output_file = "/var/www/html/data/local_network.json"
+    with open(output_file, "w") as f:
+        json.dump(data, f)
+EOF
+    chmod +x /var/www/html/api/scan_local_network.py || error_exit "Не удалось сделать scan_local_network.py исполняемым"
+
+    # --- Добавляем cron задачи для update_network_metrics и scan_local_network ---
+    # Добавляем задачу для update_network_metrics.py (если требуется)
+    (crontab -u www-data -l 2>/dev/null; echo "* * * * * /usr/bin/python3 /var/www/html/api/update_network_metrics.py") | crontab -u www-data -
+    # Добавляем задачу для scan_local_network.py с передачей переменной OUT_IF
+    (crontab -u www-data -l 2>/dev/null; echo "*/5 * * * * OUT_IF=${OUT_IF} /usr/bin/python3 /var/www/html/api/scan_local_network.py") | crontab -u www-data -
+
+    # --- network_load.service ---
+    cat <<EOF > /etc/systemd/system/network_load.service
+[Unit]
+Description=Network Load Monitor using psutil
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /var/www/html/api/update_network_load.py
+WorkingDirectory=/var/www/html/api
+User=www-data
+Group=www-data
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload || error_exit "Ошибка перезагрузки systemd после network_load.service"
+    systemctl start network_load.service || error_exit "Не удалось запустить network_load.service"
+    systemctl enable network_load.service || error_exit "Не удалось включить network_load.service"
+    log_info "network_load.service настроен"
+
+    # --- Установка необходимых пакетов для метрик ---
+    apt-get install -y python3-psutil python3-pip vnstat || error_exit "Не удалось установить пакеты для метрик"
+    pip3 install psutil || error_exit "Не удалось установить psutil через pip3"
+    log_info "Пакеты для метрик и мониторинга установлены"
+}
+
+# Настройка DHCP-сервера (isc-dhcp-server)
+configure_dhcp() {
+    log_info "Настраиваю DHCP-сервер (isc-dhcp-server)"
+    DHCP_CONF="/etc/dhcp/dhcpd.conf"
+    DHCP_DEFAULT="/etc/default/isc-dhcp-server"
+
+    [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak"
+
+    cat <<EOF > "$DHCP_CONF"
+default-lease-time 600;
+max-lease-time 7200;
+authoritative;
+subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
+    range ${LOCAL_IP%.*}.2 ${LOCAL_IP%.*}.254;
+    option routers $LOCAL_IP;
+    option subnet-mask 255.255.255.0;
+    option domain-name "local.lan";
+    option domain-name-servers 8.8.8.8, 8.8.4.4;
+}
+EOF
+
+    if grep -q "^INTERFACESv4=" "$DHCP_DEFAULT"; then
+        sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$OUT_IF\"/" "$DHCP_DEFAULT"
+    else
+        echo "INTERFACESv4=\"$OUT_IF\"" >> "$DHCP_DEFAULT"
+    fi
+
+    chown root:dhcpd /var/lib/dhcp/dhcpd.leases || error_exit "chown root:dhcpd /var/lib/dhcp/dhcpd.leases не был применен"
+    chmod 664 /var/lib/dhcp/dhcpd.leases || error_exit "chmod 664 /var/lib/dhcp/dhcpd.leases не был применен"
+    systemctl restart isc-dhcp-server || error_exit "isc-dhcp-server не был перезапущен"
+    systemctl enable isc-dhcp-server || error_exit "isc-dhcp-server не был включён для автозапуска"
+    log_info "DHCP-сервер настроен"
+}
+
+# Настройка iptables и NAT
+configure_iptables() {
+    log_info "Настраиваю iptables (MASQUERADE)"
+    sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
+    sysctl -p || error_exit "Ошибка применения sysctl"
+    iptables -t nat -A POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE || error_exit "Не удалось настроить iptables"
+    iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
+    log_info "iptables настроены"
+}
+
+# Настройка VPN (OpenVPN)
+configure_vpn() {
+    log_info "Настраиваю VPN (OpenVPN)"
+    sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
+    log_info "VPN настроен"
+}
+
+# Настройка веб-интерфейса
+configure_web_interface() {
+    log_info "Настраиваю веб-интерфейс для управления VPN"
+    # Устанавливаем корректные права на директории конфигурации
+    chmod -R 755 /etc/openvpn /etc/wireguard
+    chown -R www-data:www-data /etc/openvpn /etc/wireguard
+
+    # Для sudo-пользователей (при необходимости)
+    echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | tee -a /etc/sudoers
+    echo "www-data ALL=(ALL) NOPASSWD: ALL" | tee -a /etc/sudoers
+    echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | tee -a /etc/sudoers
+
+    # Клонируем обновлённый сайт (репозиторий web-cabinet)
+    rm -rf /var/www/html
+    git clone https://github.com/Rostarc/web-cabinet.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-сайта"
+    chown -R www-data:www-data /var/www/html
+    chmod -R 755 /var/www/html
+    log_info "Веб-сайт склонирован в /var/www/html"
+}
+
+# Функция настройки виртуального хоста Apache и базовой аутентификации
+configure_apache() {
+    log_info "Настраиваю виртуальный хост Apache и базовую аутентификацию"
+
+    # Формируем новый конфиг виртуального хоста
+    cat <<EOF > /etc/apache2/sites-available/000-default.conf
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
+
+    # Прокси для Shell In A Box
+    ProxyPass /shell/ http://127.0.0.1:4200/
+    ProxyPassReverse /shell/ http://127.0.0.1:4200/
+
+    <Directory "/var/www/html">
+        AuthType Basic
+        AuthName "Restricted Content"
+        AuthUserFile /etc/apache2/.htpasswd
+        Require valid-user
+    </Directory>
+</VirtualHost>
+EOF
+    log_info "Конфигурация виртуального хоста Apache записана в /etc/apache2/sites-available/000-default.conf"
+
+    # Настраиваем .htaccess в /var/www/html
+    cat <<'EOF' > /var/www/html/.htaccess
+<RequireAll>
+    Require ip 192.168
+</RequireAll>
+
+RewriteEngine On
+RewriteBase /
+
+# Исключаем каталог elfinder из перенаправлений
+RewriteCond %{REQUEST_URI} ^/elfinder/ [NC]
+RewriteRule .* - [L]
+
+# Если запрошен существующий файл или каталог — не перенаправляем
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Перенаправляем все остальные запросы на index.php с параметром page
+RewriteRule ^(.*)$ index.php?page=$1 [QSA,L]
+EOF
+    log_info ".htaccess создан и настроен в /var/www/html"
+
+    # Изменяем в /etc/apache2/apache2.conf блок для /var/www/ (AllowOverride)
+    sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf || error_exit "Не удалось изменить AllowOverride в apache2.conf"
+    log_info "Обновлён /etc/apache2/apache2.conf: AllowOverride для /var/www/ теперь All"
+
+    systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после внесения изменений"
+    log_info "Apache перезапущен"
+}
+
+# Функция настройки Shell In A Box (для SSH консоли)
+configure_shellinabox() {
+    log_info "Настраиваю Shell In A Box"
+    # Устанавливаем shellinabox (если ещё не установлен)
+    apt-get install -y shellinabox || error_exit "Не удалось установить shellinabox"
+    systemctl enable shellinabox
+    systemctl start shellinabox
+
+    # Переопределяем конфигурацию в /etc/default/shellinabox для рабочего варианта
+    cat <<EOF > /etc/default/shellinabox
+# Should shellinaboxd start automatically
+SHELLINABOX_DAEMON_START=1
+
+# TCP port that shellinaboxd's webserver listens on
+SHELLINABOX_PORT=4200
+
+# Параметры: отключаем SSL, отключаем звуковой сигнал
+SHELLINABOX_ARGS="--no-beep --disable-ssl"
+EOF
+    systemctl restart shellinabox || error_exit "Не удалось перезапустить shellinabox"
+    log_info "Shell In A Box настроен и перезапущен"
+}
+
 # Функция финальных доработок (права на папки, создание файла заметок)
 finalize_setup() {
     log_info "Выполняю финальные доработки"
@@ -544,12 +795,16 @@ finalize_setup() {
     sudo mkdir /home/home/files.trash/.tmb/
     sudo chmod +x /var/www/html/scripts/update.sh
     sudo chmod +x /usr/local/bin/ping_daemon.sh
+    sudo chmod +x /var/www/html/api/scan_local_network.py
+    sudo chmod +x /var/www/html/api/update_network_load.py
     sudo chown -R www-data:www-data /home/files
-    sudo chown -R www-data:www-data /home/files.trash/
-    sudo chown -R www-data:www-data /home/files.trash/.tmb/
+    sudo chown -R www-data:www-data /home/files/trash/
+    sudo chown -R www-data:www-data /home/files/trash/.tmb/
+    sudo chown -R www-data:www-data /var/www/html/data
     sudo chmod -R 755 /home/files
-    sudo chmod -R 755 /home/files.trash/
-    sudo chmod -R 755 /home/files.trash/.tmb/
+    sudo chmod -R 755 /home/files/trash/
+    sudo chmod -R 755 /home/files/trash/.tmb/
+    sudo chmod -R 755 /var/www/html/data
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
@@ -654,7 +909,7 @@ echo -e "${BLUE}      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???! 
 echo -e "${BLUE}       :~!77!~            7P             :??????J^                                                  ${NC}"
 echo ""
 echo -e "${YELLOW}==============================================${NC}"
-echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.1.3)${NC}"
+echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.1.4)${NC}"
 echo -e "${YELLOW}==============================================${NC}"
 echo ""
 echo "Выберите действие:"
@@ -675,6 +930,7 @@ fi
 configure_network_services
 install_packages
 preselect_interfaces
+configure_metrics_services
 configure_dns
 configure_dhcp
 configure_iptables
