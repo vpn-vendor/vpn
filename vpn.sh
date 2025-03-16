@@ -799,8 +799,8 @@ finalize_setup() {
     sudo chmod +x /var/www/html/api/scan_local_network.py
     sudo chmod +x /var/www/html/api/update_network_load.py
     sudo chown -R www-data:www-data /home/files
-    sudo chown -R www-data:www-data /home/files/trash/
-    sudo chown -R www-data:www-data /home/files/trash/.tmb/
+    sudo chown -R www-data:www-data /home/.files/.trash/
+    sudo chown -R www-data:www-data /home/.files/.trash/.tmb/
     sudo chown -R www-data:www-data /var/www/html/data
     sudo chmod -R 755 /home/files
     sudo chmod -R 755 /home/files/.trash/
