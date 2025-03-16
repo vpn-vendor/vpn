@@ -542,15 +542,18 @@ configure_metrics_services() {
     # --- update_metrics.service ---
     cat <<EOF > /etc/systemd/system/update_metrics.service
 [Unit]
-Description=Update Metrics Daemon
+Description=Update System Metrics Daemon
 After=network.target
 
 [Service]
 ExecStart=/usr/bin/python3 /var/www/html/api/update_metrics_daemon.py
-WorkingDirectory=/var/www/html/api
+Restart=always
+RestartSec=10
 User=www-data
 Group=www-data
-Restart=always
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=update-metrics
 
 [Install]
 WantedBy=multi-user.target
@@ -621,6 +624,10 @@ WorkingDirectory=/var/www/html/api
 User=www-data
 Group=www-data
 Restart=always
+RestartSec=10
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=network-load
 
 [Install]
 WantedBy=multi-user.target
