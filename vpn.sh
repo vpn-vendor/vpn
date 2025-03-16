@@ -791,6 +791,7 @@ EOF
 finalize_setup() {
     log_info "Выполняю финальные доработки"
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
+    sudo mkdir /home/files
     sudo mkdir /home/files/.trash/
     sudo mkdir /home/files/.trash/.tmb/
     sudo chmod +x /var/www/html/scripts/update.sh
