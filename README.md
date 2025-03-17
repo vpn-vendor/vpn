@@ -16,7 +16,7 @@ cd ~
 ```
 Скачиваем и запускаем скрипт
 ```bash
-wget https://raw.githubusercontent.com/Rostarc/vpn/main/vpn.sh -O vpn.sh && sudo bash vpn.sh
+wget https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh -O vpn.sh && sudo bash vpn.sh
 ```
 Еще бывает такая проблема -
 "Will not apply HSTS... HSTS database must be a regular and non-world-writable file"
