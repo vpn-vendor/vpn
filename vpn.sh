@@ -809,10 +809,12 @@ finalize_setup() {
     sudo chown -R www-data:www-data /home/files/.trash/
     sudo chown -R www-data:www-data /home/files/.trash/.tmb/
     sudo chown -R www-data:www-data /var/www/html/data
+    sudo chown www-data:www-data /var/log/vpn-web.log
     sudo chmod -R 755 /home/files
     sudo chmod -R 755 /home/files/.trash/
     sudo chmod -R 755 /home/files/.trash/.tmb/
     sudo chmod -R 755 /var/www/html/data
+    sudo chmod 660 /var/log/vpn-web.log
     sudo usermod -a -G adm www-data
     sudo systemctl restart apache2
     log_info "Финальные настройки прав и директорий выполнены"
