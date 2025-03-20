@@ -509,7 +509,7 @@ while true; do
     sed -i '1d' "$SYS_STATS_LOG"
   fi
 
-  sleep 10
+  sleep 2
 done
 EOF
 
