@@ -610,7 +610,7 @@ EOF
     # Добавляем задачу для update_network_metrics.py (если требуется)
     (crontab -u www-data -l 2>/dev/null; echo "* * * * * /usr/bin/python3 /var/www/html/api/update_network_metrics.py") | crontab -u www-data -
     # Добавляем задачу для scan_local_network.py с передачей переменной OUT_IF
-    (crontab -u www-data -l 2>/dev/null; echo "*/5 * * * * OUT_IF=${OUT_IF} /usr/bin/python3 /var/www/html/api/scan_local_network.py") | crontab -u www-data -
+    (crontab -u www-data -l 2>/dev/null; echo "0 */6 * * * OUT_IF=${OUT_IF} /usr/bin/python3 /var/www/html/api/scan_local_network.py") | crontab -u www-data -
 
     # --- network_load.service ---
     cat <<EOF > /etc/systemd/system/network_load.service
