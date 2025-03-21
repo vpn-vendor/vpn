@@ -461,7 +461,7 @@ configure_ping_daemon() {
 PING_LOG="/var/log/ping_history.log"
 SYS_STATS_LOG="/var/log/sys_stats.log"
 HOST="google.com"
-MAX_ENTRIES=2000  # Максимальное количество записей в каждом логе
+MAX_ENTRIES=86400  # Максимальное количество записей в каждом логе
 
 # Если лог-файлы не существуют, создаём их
 [ ! -f "$PING_LOG" ] && touch "$PING_LOG"
