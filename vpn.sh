@@ -646,6 +646,61 @@ EOF
     log_info "Пакеты для метрик и мониторинга установлены"
 }
 
+# Функция настройки Home Metrics Daemon
+configure_home_metrics_daemon() {
+    log_info "Настраиваю Home Metrics Daemon"
+
+    # Создаем/перезаписываем unit-файл для home_metrics_daemon.service
+    cat <<'EOF' > /etc/systemd/system/home_metrics_daemon.service
+[Unit]
+Description=Home Metrics Daemon (Collect CPU/RAM/Disk history)
+After=network.target
+
+[Service]
+# Запуск вашего скрипта
+ExecStart=/usr/bin/python3 /var/www/html/api/home_metrics_daemon.py
+
+# Перезапускать при сбоях
+Restart=always
+RestartSec=2
+
+# Кто будет исполнять (можно root или www-data, в зависимости от ваших нужд)
+User=www-data
+Group=www-data
+
+# Логи будут попадать в syslog (journalctl -u home_metrics_daemon)
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=home-metrics-daemon
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    log_info "Файл home_metrics_daemon.service создан"
+
+    # Перезагружаем демон systemd и запускаем сервис
+    systemctl daemon-reload || error_exit "Не удалось перезагрузить systemd после создания home_metrics_daemon.service"
+    log_info "systemd daemon перезагружен"
+
+    systemctl start home_metrics_daemon.service || error_exit "Не удалось запустить home_metrics_daemon.service"
+    systemctl enable home_metrics_daemon.service || error_exit "Не удалось включить home_metrics_daemon.service"
+    log_info "home_metrics_daemon.service запущен и включен"
+
+    # Рекомендуется перезапустить сервис, если это необходимо
+    systemctl restart home_metrics_daemon.service || error_exit "Не удалось перезапустить home_metrics_daemon.service"
+    log_info "home_metrics_daemon.service перезапущен"
+
+    # Если файла нет – создаем пустой
+    if [ ! -f /var/www/html/data/home_metrics_daemon.json ]; then
+        touch /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось создать файл /var/www/html/data/home_metrics_daemon.json"
+    fi
+
+    chmod 644 /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось установить права 644 на /var/www/html/data/home_metrics_daemon.json"
+    chown www-data:www-data /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось изменить владельца файла /var/www/html/data/home_metrics_daemon.json"
+    log_info "Права для /var/www/html/data/home_metrics_daemon.json установлены"
+}
+
 # Настройка DHCP-сервера (isc-dhcp-server)
 configure_dhcp() {
     log_info "Настраиваю DHCP-сервер (isc-dhcp-server)"
@@ -954,6 +1009,7 @@ configure_apache
 configure_shellinabox
 configure_ping_daemon
 configure_metrics_services
+configure_home_metrics_daemon
 finalize_setup
 
 # Финальная проверка с анимацией
