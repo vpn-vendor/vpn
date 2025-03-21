@@ -518,12 +518,15 @@ EOF
     # Создаём systemd unit для демона
     cat <<EOF > /etc/systemd/system/ping_daemon.service
 [Unit]
-Description=Ping Daemon
+Description=Ping Daemon (сбор ping каждые 2 секунды)
 After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/ping_daemon.sh
 Restart=always
+RestartSec=2
+User=root
+Group=root
 
 [Install]
 WantedBy=multi-user.target
