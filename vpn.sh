@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Поддержка Ubuntu 20.04, 22.04, 24.04, Linux Mint (чистая установка)
-# Версия: 2.1.4
+# Версия: 2.1.5
 # =============================================================================
 
 # Устанавливаем неинтерактивный режим для apt
@@ -701,180 +701,29 @@ EOF
     log_info "Права для /var/www/html/data/home_metrics_daemon.json установлены"
 }
 
-# Настройка DHCP-сервера (isc-dhcp-server)
-configure_dhcp() {
-    log_info "Настраиваю DHCP-сервер (isc-dhcp-server)"
-    DHCP_CONF="/etc/dhcp/dhcpd.conf"
-    DHCP_DEFAULT="/etc/default/isc-dhcp-server"
-
-    [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak"
-
-    cat <<EOF > "$DHCP_CONF"
-default-lease-time 600;
-max-lease-time 7200;
-authoritative;
-subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
-    range ${LOCAL_IP%.*}.2 ${LOCAL_IP%.*}.254;
-    option routers $LOCAL_IP;
-    option subnet-mask 255.255.255.0;
-    option domain-name "local.lan";
-    option domain-name-servers 8.8.8.8, 8.8.4.4;
-}
-EOF
-
-    if grep -q "^INTERFACESv4=" "$DHCP_DEFAULT"; then
-        sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$OUT_IF\"/" "$DHCP_DEFAULT"
-    else
-        echo "INTERFACESv4=\"$OUT_IF\"" >> "$DHCP_DEFAULT"
-    fi
-
-    chown root:dhcpd /var/lib/dhcp/dhcpd.leases || error_exit "chown root:dhcpd /var/lib/dhcp/dhcpd.leases не был применен"
-    chmod 664 /var/lib/dhcp/dhcpd.leases || error_exit "chmod 664 /var/lib/dhcp/dhcpd.leases не был применен"
-    systemctl restart isc-dhcp-server || error_exit "isc-dhcp-server не был перезапущен"
-    systemctl enable isc-dhcp-server || error_exit "isc-dhcp-server не был включён для автозапуска"
-    log_info "DHCP-сервер настроен"
-}
-
-# Настройка iptables и NAT
-configure_iptables() {
-    log_info "Настраиваю iptables (MASQUERADE)"
-    sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
-    sysctl -p || error_exit "Ошибка применения sysctl"
-    iptables -t nat -A POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE || error_exit "Не удалось настроить iptables"
-    iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
-    log_info "iptables настроены"
-}
-
-# Настройка VPN (OpenVPN)
-configure_vpn() {
-    log_info "Настраиваю VPN (OpenVPN)"
-    sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
-    log_info "VPN настроен"
-}
-
-# Настройка веб-интерфейса
-configure_web_interface() {
-    log_info "Настраиваю веб-интерфейс для управления VPN"
-    # Устанавливаем корректные права на директории конфигурации
-    chmod -R 755 /etc/openvpn /etc/wireguard
-    chown -R www-data:www-data /etc/openvpn /etc/wireguard
-
-    # Для sudo-пользователей (при необходимости)
-    echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | tee -a /etc/sudoers
-    echo "www-data ALL=(ALL) NOPASSWD: ALL" | tee -a /etc/sudoers
-    echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | tee -a /etc/sudoers
-
-    # Клонируем обновлённый сайт (репозиторий web-cabinet)
-    rm -rf /var/www/html
-    git clone https://github.com/Rostarc/web-cabinet.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-сайта"
-    chown -R www-data:www-data /var/www/html
-    chmod -R 755 /var/www/html
-    log_info "Веб-сайт склонирован в /var/www/html"
-}
-
-# Функция настройки виртуального хоста Apache и базовой аутентификации
-configure_apache() {
-    log_info "Настраиваю виртуальный хост Apache и базовую аутентификацию"
-
-    # Формируем новый конфиг виртуального хоста
-    cat <<EOF > /etc/apache2/sites-available/000-default.conf
-<VirtualHost *:80>
-    ServerAdmin webmaster@localhost
-    DocumentRoot /var/www/html
-    ErrorLog \${APACHE_LOG_DIR}/error.log
-    CustomLog \${APACHE_LOG_DIR}/access.log combined
-
-    # Прокси для Shell In A Box
-    ProxyPass /shell/ http://127.0.0.1:4200/
-    ProxyPassReverse /shell/ http://127.0.0.1:4200/
-
-    <Directory "/var/www/html">
-        AuthType Basic
-        AuthName "Restricted Content"
-        AuthUserFile /etc/apache2/.htpasswd
-        Require valid-user
-    </Directory>
-</VirtualHost>
-EOF
-    log_info "Конфигурация виртуального хоста Apache записана в /etc/apache2/sites-available/000-default.conf"
-
-    # Настраиваем .htaccess в /var/www/html
-    cat <<'EOF' > /var/www/html/.htaccess
-<RequireAll>
-    Require ip 192.168
-</RequireAll>
-
-RewriteEngine On
-RewriteBase /
-
-# Исключаем каталог elfinder из перенаправлений
-RewriteCond %{REQUEST_URI} ^/elfinder/ [NC]
-RewriteRule .* - [L]
-
-# Если запрошен существующий файл или каталог — не перенаправляем
-RewriteCond %{REQUEST_FILENAME} -f [OR]
-RewriteCond %{REQUEST_FILENAME} -d
-RewriteRule ^ - [L]
-
-# Перенаправляем все остальные запросы на index.php с параметром page
-RewriteRule ^(.*)$ index.php?page=$1 [QSA,L]
-EOF
-    log_info ".htaccess создан и настроен в /var/www/html"
-
-    # Изменяем в /etc/apache2/apache2.conf блок для /var/www/ (AllowOverride)
-    sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf || error_exit "Не удалось изменить AllowOverride в apache2.conf"
-    log_info "Обновлён /etc/apache2/apache2.conf: AllowOverride для /var/www/ теперь All"
-
-    systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после внесения изменений"
-    log_info "Apache перезапущен"
-}
-
-# Функция настройки Shell In A Box (для SSH консоли)
-configure_shellinabox() {
-    log_info "Настраиваю Shell In A Box"
-    # Устанавливаем shellinabox (если ещё не установлен)
-    apt-get install -y shellinabox || error_exit "Не удалось установить shellinabox"
-    systemctl enable shellinabox
-    systemctl start shellinabox
-
-    # Переопределяем конфигурацию в /etc/default/shellinabox для рабочего варианта
-    cat <<EOF > /etc/default/shellinabox
-# Should shellinaboxd start automatically
-SHELLINABOX_DAEMON_START=1
-
-# TCP port that shellinaboxd's webserver listens on
-SHELLINABOX_PORT=4200
-
-# Параметры: отключаем SSL, отключаем звуковой сигнал
-SHELLINABOX_ARGS="--no-beep --disable-ssl"
-EOF
-    systemctl restart shellinabox || error_exit "Не удалось перезапустить shellinabox"
-    log_info "Shell In A Box настроен и перезапущен"
-}
-
 # Функция финальных доработок (права на папки, создание файла заметок)
 finalize_setup() {
     log_info "Выполняю финальные доработки"
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
-    sudo mkdir /home/files
-    sudo mkdir /home/files/.trash/
-    sudo mkdir /home/files/.trash/.tmb/
-    sudo chmod +x /var/www/html/scripts/update.sh
-    sudo chmod +x /usr/local/bin/ping_daemon.sh
-    sudo chmod +x /var/www/html/api/scan_local_network.py
-    sudo chmod +x /var/www/html/api/update_network_load.py
-    sudo chown -R www-data:www-data /home/files
-    sudo chown -R www-data:www-data /home/files/.trash/
-    sudo chown -R www-data:www-data /home/files/.trash/.tmb/
-    sudo chown -R www-data:www-data /var/www/html/data
-    sudo chown www-data:www-data /var/log/vpn-web.log
-    sudo chmod -R 755 /home/files
-    sudo chmod -R 755 /home/files/.trash/
-    sudo chmod -R 755 /home/files/.trash/.tmb/
-    sudo chmod -R 755 /var/www/html/data
-    sudo chmod 660 /var/log/vpn-web.log
-    sudo usermod -a -G adm www-data
-    sudo systemctl restart apache2
+    mkdir -p /home/files/.trash/.tmb/
+    mkdir -p /home/files/.trash/
+    mkdir -p /home/files
+    chmod +x /var/www/html/scripts/update.sh
+    chmod +x /usr/local/bin/ping_daemon.sh
+    chmod +x /var/www/html/api/scan_local_network.py
+    chmod +x /var/www/html/api/update_network_load.py
+    chown -R www-data:www-data /home/files
+    chown -R www-data:www-data /home/files/.trash/
+    chown -R www-data:www-data /home/files/.trash/.tmb/
+    chown -R www-data:www-data /var/www/html/data
+    chown www-data:www-data /var/log/vpn-web.log
+    chmod -R 755 /home/files
+    chmod -R 755 /home/files/.trash/
+    chmod -R 755 /home/files/.trash/.tmb/
+    chmod -R 755 /var/www/html/data
+    chmod 660 /var/log/vpn-web.log
+    usermod -a -G adm www-data
+    systemctl restart apache2
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
