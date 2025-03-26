@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
 # Поддержка Ubuntu 20.04, 22.04, 24.04, Linux Mint (чистая установка)
-# Версия: 2.1.5
+# Версия: 2.5.0
 # =============================================================================
 
 # Устанавливаем неинтерактивный режим для apt
@@ -646,6 +646,65 @@ EOF
     log_info "Пакеты для метрик и мониторинга установлены"
 }
 
+# Функция для настройки и запуска Telegram Bot Service.
+telegram_bot() {
+    echo "Настройка Telegram Bot Service..."
+
+    # Создание файла службы /etc/systemd/system/telegram_bot.service
+    sudo tee /etc/systemd/system/telegram_bot.service > /dev/null << 'EOF'
+[Unit]
+Description=Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/html/bot_source
+ExecStart=/var/www/html/bot_source/venv/bin/python /var/www/html/bot_source/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Создание лог-файла и установка прав
+    sudo touch /var/log/telegram_bot.log
+    sudo chown www-data:www-data /var/log/telegram_bot.log
+    sudo chmod 664 /var/log/telegram_bot.log
+
+    # Обновление конфигурации systemd и активация службы
+    sudo systemctl daemon-reload
+    sudo systemctl enable telegram_bot.service
+    sudo systemctl start telegram_bot.service
+    sudo systemctl status telegram_bot.service
+
+    # Установка пакетов для работы виртуального окружения
+    sudo apt-get update
+    sudo apt-get install -y python3-venv python3.10-venv
+
+    # Создание виртуального окружения для Telegram Bot
+    sudo python3 -m venv /var/www/html/bot_source/venv
+    sudo chown -R $USER:$USER /var/www/html/bot_source/venv
+    source /var/www/html/bot_source/venv/bin/activate
+
+    # Обновление pip и установка необходимых библиотек
+    pip install --upgrade pip
+    pip install python-telegram-bot psutil requests "python-telegram-bot[job-queue]"
+
+    # Добавление прав для пользователя www-data для управления службой
+    echo "www-data ALL=NOPASSWD: /bin/systemctl is-active telegram_bot.service, /bin/systemctl start telegram_bot.service, /bin/systemctl stop telegram_bot.service, /bin/systemctl enable telegram_bot.service, /bin/systemctl disable telegram_bot.service" | sudo tee /etc/sudoers.d/telegram_bot
+
+    # Установка исполняемых прав для bot.py
+    sudo chmod +x /var/www/html/bot_source/bot.py
+
+    # Настройка прав для файла конфигурации telegram_bot_config.json
+    sudo chown www-data:www-data /var/www/html/data/telegram_bot_config.json
+    sudo chmod 664 /var/www/html/data/telegram_bot_config.json
+
+    echo "Telegram Bot Service успешно настроен и запущен."
+}
+
 # Функция настройки Home Metrics Daemon
 configure_home_metrics_daemon() {
     log_info "Настраиваю Home Metrics Daemon"
@@ -858,6 +917,7 @@ configure_apache
 configure_shellinabox
 configure_ping_daemon
 configure_metrics_services
+telegram_bot
 configure_home_metrics_daemon
 finalize_setup
 
