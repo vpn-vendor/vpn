@@ -831,6 +831,59 @@ remove_configuration() {
     # Перезагружаем systemd, чтобы изменения в unit-файлах вступили в силу
     systemctl daemon-reload
 
+    # Удаление настроек Телеграм бота
+    echo "Начало удаления конфигурации Telegram Bot Service..."
+
+    # Остановка и отключение сервиса, если он запущен или включён
+    if systemctl is-active --quiet telegram_bot.service; then
+        echo "Останавливаем сервис telegram_bot..."
+        sudo systemctl stop telegram_bot.service
+    else
+        echo "Сервис telegram_bot уже не запущен."
+    fi
+
+    if systemctl is-enabled --quiet telegram_bot.service; then
+        echo "Отключаем сервис telegram_bot..."
+        sudo systemctl disable telegram_bot.service
+    else
+        echo "Сервис telegram_bot уже отключён."
+    fi
+
+    # Удаление файла службы systemd
+    if [ -f /etc/systemd/system/telegram_bot.service ]; then
+        echo "Удаляем файл службы /etc/systemd/system/telegram_bot.service..."
+        sudo rm -f /etc/systemd/system/telegram_bot.service
+    else
+        echo "Файл службы /etc/systemd/system/telegram_bot.service не найден."
+    fi
+
+    # Обновляем конфигурацию systemd
+    sudo systemctl daemon-reload
+
+    # 4. Удаление лог-файла
+    if [ -f /var/log/telegram_bot.log ]; then
+        echo "Удаляем лог-файл /var/log/telegram_bot.log..."
+        sudo rm -f /var/log/telegram_bot.log
+    else
+        echo "Лог-файл /var/log/telegram_bot.log не найден."
+    fi
+
+    # Удаление виртуального окружения
+    if [ -d /var/www/html/bot_source/venv ]; then
+        echo "Удаляем виртуальное окружение /var/www/html/bot_source/venv..."
+        sudo rm -rf /var/www/html/bot_source/venv
+    else
+        echo "Виртуальное окружение /var/www/html/bot_source/venv не найдено."
+    fi
+
+    # Удаление файла sudoers для управления службой telegram_bot
+    if [ -f /etc/sudoers.d/telegram_bot ]; then
+        echo "Удаляем файл sudoers /etc/sudoers.d/telegram_bot..."
+        sudo rm -f /etc/sudoers.d/telegram_bot
+    else
+        echo "Файл sudoers /etc/sudoers.d/telegram_bot не найден."
+    fi
+    
     log_info "Все настройки удалены"
 }
 
