@@ -677,7 +677,6 @@ EOF
     sudo systemctl daemon-reload
     sudo systemctl enable telegram_bot.service
     sudo systemctl start telegram_bot.service
-    sudo systemctl status telegram_bot.service
 
     # Установка пакетов для работы виртуального окружения
     sudo apt-get update
