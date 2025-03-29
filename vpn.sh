@@ -808,7 +808,7 @@ remove_configuration() {
 
     # Если установлен dnsmasq, дополнительно удаляем его
     if dpkg -l | grep -qw dnsmasq; then
-        log_info "Удаление dnsmasq"
+        log_info "Начато удаление dnsmasq"
         apt-get purge -y dnsmasq || log_error "Не удалось удалить dnsmasq"
         log_info "dnsmasq удалён"
     fi
@@ -816,7 +816,8 @@ remove_configuration() {
     # Удаляем конфигурационные файлы и директории, связанные с настройкой
     rm -rf /etc/openvpn /etc/wireguard /var/www/html
     rm -f /etc/dhcp/dhcpd.conf /etc/default/isc-dhcp-server /var/lib/dhcp/dhcpd.leases
-    rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer
+    rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer || log_error "Не удалось удалить остатки конфигураций служб"
+    log_info "Удалены остатки конфигураций служб"
 
     # Удаляем установленные пакеты
     apt-get purge -y \
@@ -824,10 +825,12 @@ remove_configuration() {
         openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server \
         libapache2-mod-authnz-pam shellinabox dos2unix || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
     apt-get autoremove -y
+    log_info "Приложения и программы удалены"
 
     # Удаляем правило NAT, если оно было добавлено
     iptables -t nat -D POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
+    log_info "Удалены правила iptables"
 
     # Перезагружаем systemd, чтобы изменения в unit-файлах вступили в силу
     systemctl daemon-reload
@@ -849,6 +852,7 @@ remove_configuration() {
     else
         echo "Сервис telegram_bot уже отключён."
     fi
+    log_info "Сервис telegram_bot отключен"
 
     # Удаление файла службы systemd
     if [ -f /etc/systemd/system/telegram_bot.service ]; then
@@ -868,6 +872,7 @@ remove_configuration() {
     else
         echo "Лог-файл /var/log/telegram_bot.log не найден."
     fi
+    log_info "Лог-файл telegram_bot удален"
 
     # Удаление виртуального окружения
     if [ -d /var/www/html/bot_source/venv ]; then
@@ -876,6 +881,7 @@ remove_configuration() {
     else
         echo "Виртуальное окружение /var/www/html/bot_source/venv не найдено."
     fi
+    log_info "Виртуальное окружение отключено"
 
     # Удаление файла sudoers для управления службой telegram_bot
     if [ -f /etc/sudoers.d/telegram_bot ]; then
