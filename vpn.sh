@@ -11,7 +11,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Лог-файл
-LOG_FILE="/var/log/vpn_setup.log"
+LOG_FILE="~/vpn_setup.log"
 
 # Добавление заголовка для нового запуска скрипта в лог-файл
 echo "###### $(date '+%Y-%m-%d %H:%M:%S') - Новый запуск скрипта ######" >> "$LOG_FILE"
