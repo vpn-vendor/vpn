@@ -11,7 +11,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Лог-файл
-LOG_FILE="~/vpn_setup.log"
+LOG_FILE=~/vpn_setup.log
 
 # Добавление заголовка для нового запуска скрипта в лог-файл
 echo "###### $(date '+%Y-%m-%d %H:%M:%S') - Новый запуск скрипта ######" >> "$LOG_FILE"
@@ -135,7 +135,7 @@ preselect_interfaces() {
     echo "1. Полная настройка."
     echo "2. Настроить только NETPLAN и пропустить основную настройку."
     echo "3. Пропустить настройку NETPLAN и выполнить дальше основную настройку."
-    read -p "Ваш выбор [1/2/3]: " netplan_choice
+    read -r -p "Ваш выбор [1/2/3]: " netplan_choice
 
     case "$netplan_choice" in
         1)
@@ -194,13 +194,13 @@ select_interfaces() {
     echo -e "Доступные сетевые интерфейсы:\n$full_list"
     echo ""
 
-    read -p "Введите номер ВХОДЯЩЕГО интерфейса (подключен к интернету): " in_num
+    read -r -p "Введите номер ВХОДЯЩЕГО интерфейса (подключен к интернету): " in_num
     IN_IF="${interfaces_array[$in_num]}"
     if [ -z "$IN_IF" ]; then
         error_exit "Некорректный выбор входящего интерфейса"
     fi
 
-    read -p "Введите номер ВЫХОДЯЩЕГО интерфейса (локальная сеть): " out_num
+    read -r -p "Введите номер ВЫХОДЯЩЕГО интерфейса (локальная сеть): " out_num
     OUT_IF="${interfaces_array[$out_num]}"
     if [ -z "$OUT_IF" ]; then
         error_exit "Некорректный выбор выходящего интерфейса"
@@ -209,9 +209,9 @@ select_interfaces() {
     log_info "Выбран входящий интерфейс: $IN_IF"
     log_info "Выбран выходящий интерфейс: $OUT_IF"
 
-    read -p "Использовать стандартный локальный IP-адрес (192.168.1.1)? [y/n]: " use_default
+    read -r -p "Использовать стандартный локальный IP-адрес (192.168.1.1)? [y/n]: " use_default
     if [ "$use_default" == "n" ]; then
-        read -p "Введите новый локальный IP-адрес в формате 192.168.X.1: " LOCAL_IP
+        read -r -p "Введите новый локальный IP-адрес в формате 192.168.X.1: " LOCAL_IP
         if [[ ! $LOCAL_IP =~ ^192\.168\.[0-9]{1,3}\.1$ ]]; then
             error_exit "Неверный формат локального IP"
         fi
@@ -229,7 +229,7 @@ configure_netplan() {
     echo "Выберите вариант настройки входящего интерфейса:"
     echo "1) Получать IP по DHCP"
     echo "2) Статическая настройка (ввод параметров вручную)"
-    read -p "Ваш выбор [1/2]: " net_choice
+    read -r -p "Ваш выбор [1/2]: " net_choice
 
     if [ "$net_choice" == "1" ]; then
         cat <<EOF > /etc/netplan/01-network-manager-all.yaml
@@ -250,11 +250,11 @@ network:
       optional: true
 EOF
     elif [ "$net_choice" == "2" ]; then
-        read -p "Введите статический IP для входящего интерфейса: " STATIC_IP
-        read -p "Введите маску (например, 24): " SUBNET_MASK
-        read -p "Введите шлюз: " GATEWAY
-        read -p "Введите DNS1: " DNS1
-        read -p "Введите DNS2: " DNS2
+        read -r -p "Введите статический IP для входящего интерфейса: " STATIC_IP
+        read -r -p "Введите маску (например, 24): " SUBNET_MASK
+        read -r -p "Введите шлюз: " GATEWAY
+        read -r -p "Введите DNS1: " DNS1
+        read -r -p "Введите DNS2: " DNS2
         cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
@@ -353,7 +353,7 @@ configure_iptables() {
     log_info "Настраиваю iptables (MASQUERADE)"
     sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
     sysctl -p || error_exit "Ошибка применения sysctl"
-    iptables -t nat -A POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE || error_exit "Не удалось настроить iptables"
+    iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE || error_exit "Не удалось настроить iptables"
     iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
     log_info "iptables настроены"
 }
@@ -697,7 +697,7 @@ EOF
 
     # Создание виртуального окружения для Telegram Bot
     sudo python3 -m venv /var/www/html/bot_source/venv
-    sudo chown -R $USER:$USER /var/www/html/bot_source/venv
+    sudo chown -R "$USER":"$USER" /var/www/html/bot_source/venv
     source /var/www/html/bot_source/venv/bin/activate
 
     # Обновление pip и установка необходимых библиотек
@@ -837,7 +837,7 @@ remove_configuration() {
     apt-get autoremove -y
 
     # Удаляем правило NAT, если оно было добавлено
-    iptables -t nat -D POSTROUTING -o tun0 -s ${LOCAL_IP%.*}.0/24 -j MASQUERADE 2>/dev/null
+    iptables -t nat -D POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
 
     # Перезагружаем systemd, чтобы изменения в unit-файлах вступили в силу
@@ -959,7 +959,7 @@ echo "Выберите действие:"
 echo "1) Установить и настроить сервер"
 echo "2) Удалить все настройки сервера"
 echo ""
-read -p "Ваш выбор [1/2]: " action_choice
+read -r -p "Ваш выбор [1/2]: " action_choice
 
 if [ "$action_choice" == "2" ]; then
     remove_configuration
