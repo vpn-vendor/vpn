@@ -155,7 +155,7 @@ preselect_interfaces() {
                 error_exit "Не удалось определить сетевые интерфейсы из netplan файла."
             fi
             if [ -z "$LOCAL_IP" ]; then
-                LOCAL_IP="192.168.1.1"
+                LOCAL_IP="192.168.69.1"
             fi
             log_info "Используются текущие настройки интерфейсов: ВХОДЯЩИЙ: $IN_IF, ВЫХОДЯЩИЙ: $OUT_IF, LOCAL_IP: $LOCAL_IP"
             ;;
