@@ -80,7 +80,7 @@ install_packages() {
     apt-get upgrade -y || error_exit "Обновление системы не выполнено"
     log_info "Обновление системы прошло"
     
-    apt-get install -y htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
+    apt-get install -y net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
 
     # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
