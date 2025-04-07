@@ -74,7 +74,7 @@ configure_network_services() {
 
 # Установщик пакетов
 install_packages() {
-    log_info "Обновление репозиториев"
+    log_info "Инициализация запуска обновлений + установки программ"
     apt-get update || error_exit "Обновление репозиториев не выполнено"
     
     apt-get upgrade -y || error_exit "Обновление системы не выполнено"
