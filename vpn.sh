@@ -796,6 +796,7 @@ finalize_setup() {
 # Удаление и откат изменений
 remove_configuration() {
 
+    log_info "Запуск удаления зависимостей и программ"
     # Определяем список сервисов для остановки и отключения
     services=(
         "openvpn@client1.service"
@@ -810,6 +811,7 @@ remove_configuration() {
         systemctl stop "$service" 2>/dev/null
         systemctl disable "$service" 2>/dev/null
     done
+    log_info "Остановка служб прошла"
 
     # Если установлен dnsmasq, дополнительно удаляем его
     if dpkg -l | grep -qw dnsmasq; then
