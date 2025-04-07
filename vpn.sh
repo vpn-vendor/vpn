@@ -239,7 +239,6 @@ network:
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
       optional: true
-###################################################
 EOF
     elif [ "$net_choice" == "2" ]; then
         read -r -p "Введите статический IP для входящего интерфейса: " STATIC_IP
@@ -269,7 +268,6 @@ network:
       nameservers:
         addresses: [8.8.8.8, 8.8.4.4]
       optional: true
-###################################################
 EOF
     else
         error_exit "Неверный выбор варианта настройки сети"
