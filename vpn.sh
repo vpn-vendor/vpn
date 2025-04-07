@@ -688,7 +688,7 @@ EOF
     # Обновление конфигурации systemd и активация службы
     sudo systemctl daemon-reload
     sudo systemctl enable telegram_bot.service
-    sudo systemctl start telegram_bot.service
+    sudo systemctl stop telegram_bot.service
 
     # Создание виртуального окружения для Telegram Bot
     sudo python3 -m venv /var/www/html/bot_source/venv
