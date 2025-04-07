@@ -970,8 +970,8 @@ elif [ "$action_choice" != "1" ]; then
 fi
 
 # Выполнение установки и настройки
-configure_network_services
 install_packages
+configure_network_services
 preselect_interfaces
 configure_dns
 configure_dhcp
