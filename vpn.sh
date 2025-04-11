@@ -323,7 +323,7 @@ subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
     range ${LOCAL_IP%.*}.2 ${LOCAL_IP%.*}.254;
     option routers $LOCAL_IP;
     option subnet-mask 255.255.255.0;
-    option domain-name "local.lan";
+    option domain-name "vpn.vendor";
     option domain-name-servers 8.8.8.8, 8.8.4.4;
 }
 EOF
