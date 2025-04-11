@@ -372,7 +372,7 @@ configure_web_interface() {
 
     # Клонируем обновлённый сайт (репозиторий web-cabinet)
     rm -rf /var/www/html
-    git clone https://github.com/Rostarc/web-cabinet.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-сайта"
+    git clone https://github.com/vpn-vendor/web-cabinet.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-сайта"
     chown -R www-data:www-data /var/www/html
     chmod -R 755 /var/www/html
     log_info "Веб-сайт склонирован в /var/www/html"
