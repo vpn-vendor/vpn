@@ -346,8 +346,8 @@ configure_iptables() {
     log_info "Настраиваю iptables (MASQUERADE)"
     sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
     sysctl -p || error_exit "Ошибка применения sysctl"
-    iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE || error_exit "Не удалось настроить iptables"
-    iptables -I FORWARD -s "${LOCAL_IP%.*}.0/24" ! -o tun0 -j DROP
+    iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE || error_exit "Не удалось настроить iptables 1/2"
+    iptables -I FORWARD -s "${LOCAL_IP%.*}.0/24" ! -o tun0 -j DROP || error_exit "Не удалось настроить iptables 2/2"
     iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
     log_info "iptables настроены"
 }
