@@ -835,6 +835,9 @@ remove_configuration() {
     # Удаляем правило NAT, если оно было добавлено
     iptables -t nat -D POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
+    iptables -F
+    iptables -t nat -F
+    iptables -X
     log_info "Удалены правила iptables"
 
     # Перезагружаем systemd, чтобы изменения в unit-файлах вступили в силу
