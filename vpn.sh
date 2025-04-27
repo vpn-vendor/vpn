@@ -55,6 +55,12 @@ check_root() {
     fi
 }
 
+# Смена зеркал на глобальные
+echo ""
+echo "[*] Смена зеркал на глобальные..."
+echo ""
+sed -i 's|http://ru.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+
 # Функция переключения сетевого управления на systemd-networkd
 configure_network_services() {
     log_info "Переключаю сетевое управление на systemd-networkd"
