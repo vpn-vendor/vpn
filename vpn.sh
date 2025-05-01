@@ -140,6 +140,7 @@ preselect_interfaces() {
             ;;
         2)
             # Настроить только NETPLAN и пропустить основную настройку.
+            configure_network_services
             select_interfaces
             configure_netplan
             echo -e "\n${GREEN}[OK]${NC} Настройка netplan выполнена. Дальнейшая настройка пропущена."
