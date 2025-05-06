@@ -59,7 +59,26 @@ check_root() {
 echo ""
 echo "[*] Смена зеркал на глобальные..."
 echo ""
+
+# Заменяем ru.archive.ubuntu.com, если нашли
 sed -i 's|http://ru.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+
+# Обновляем mirrors в Mint-стиле
+OFFICIAL_LIST="/etc/apt/sources.list.d/official-package-repositories.list"
+if [ -f "$OFFICIAL_LIST" ]; then
+    cp "$OFFICIAL_LIST" "${OFFICIAL_LIST}.bak"
+    cat <<EOF > "$OFFICIAL_LIST"
+deb http://packages.linuxmint.com virginia main upstream import backport
+deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+EOF
+    echo "[OK] Зеркала успешно заменены (Linux Mint / Ubuntu)"
+else
+    echo "[INFO] Файл $OFFICIAL_LIST не найден, смена зеркал пропущена"
+fi
+
 
 # Функция переключения сетевого управления на systemd-networkd
 configure_network_services() {
