@@ -263,7 +263,7 @@ network:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
       nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+        addresses: [$LOCAL_IP]
       optional: true
 EOF
     elif [ "$net_choice" == "2" ]; then
@@ -292,7 +292,7 @@ network:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
       nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+        addresses: [$LOCAL_IP]
       optional: true
 EOF
     else
@@ -314,20 +314,9 @@ EOF
 
 # Настройка DNS
 configure_dns() {
-    log_info "Настраиваю DNS через systemd-resolved"
-    RESOLVED_CONF="/etc/systemd/resolved.conf"
-
-    # Поиск [Resolve] и удаление старых DNS= и добавление строк
-    if grep -q "^\[Resolve\]" "$RESOLVED_CONF"; then
-        # Удаляем строки, начинающиеся с DNS= в блоке [Resolve]
-        sed -i '/^\[Resolve\]/,/^\[/ s/^DNS=.*//g' "$RESOLVED_CONF"
-        # Добавляем нужную строку сразу после [Resolve]
-        sed -i '/^\[Resolve\]/a DNS=8.8.8.8 8.8.4.4' "$RESOLVED_CONF"
-    else
-        # Если секция отсутствует, добавляем её в конец файла
-        echo -e "\n[Resolve]\nDNS=8.8.8.8 8.8.4.4" >> "$RESOLVED_CONF"
-    fi
-
+    log_info "Настраиваю DNS"
+    sed -i '/^\[Resolve\]/,/^\[/ {/^\(DNS\|Domains\)=/d}' /etc/systemd/resolved.conf
+    
     # Перезапускаем systemd-resolved
     systemctl restart systemd-resolved || error_exit "Не удалось перезапустить systemd-resolved"
     log_info "DNS настроены через systemd-resolved"
@@ -350,7 +339,7 @@ subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
     option routers $LOCAL_IP;
     option subnet-mask 255.255.255.0;
     option domain-name "vpn.vendor";
-    option domain-name-servers 8.8.8.8, 8.8.4.4;
+    option domain-name-servers $LOCAL_IP, 94.140.14.14;
 }
 EOF
 
