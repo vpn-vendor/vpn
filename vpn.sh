@@ -262,8 +262,6 @@ network:
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
       optional: true
 EOF
     elif [ "$net_choice" == "2" ]; then
@@ -291,8 +289,6 @@ network:
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
       optional: true
 EOF
     else
@@ -339,7 +335,7 @@ subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
     option routers $LOCAL_IP;
     option subnet-mask 255.255.255.0;
     option domain-name "vpn.vendor";
-    option domain-name-servers 8.8.8.8, 8.8.4.4;
+    option domain-name-servers 94.140.14.14, 94.140.15.15;
 }
 EOF
 
