@@ -266,7 +266,7 @@ network:
 EOF
     elif [ "$net_choice" == "2" ]; then
         read -r -p "Введите статический IP для входящего интерфейса: " STATIC_IP
-        read -r -p "Введите маску (например, 24): " SUBNET_MASK
+        read -r -p "Введите маску (ТОЛЬКО 2 цифры например 24, а не 255.255.255.224): " SUBNET_MASK
         read -r -p "Введите шлюз: " GATEWAY
         read -r -p "Введите DNS1: " DNS1
         read -r -p "Введите DNS2: " DNS2
