@@ -249,13 +249,12 @@ configure_netplan() {
     if [ "$net_choice" == "1" ]; then
         cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 ###################################################
-# За помощью обращаться в телеграмм - @vpn_vendor
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
   version: 2
   renderer: networkd
   ethernets:
-  # Входящий интерфейс (провайдер-dhcp/другой сервер):
+  # Входящий интерфейс (белый интернет):
     $IN_IF:
       dhcp4: true
   # Выходящий интерфейс (локальная сеть):
@@ -272,13 +271,12 @@ EOF
         read -r -p "Введите DNS2: " DNS2
         cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 ###################################################
-# За помощью обращаться в телеграмм - @vpn_vendor
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
   version: 2
   renderer: networkd
   ethernets:
-  # Входящий интерфейс (провайдер-статика/другой сервер):
+  # Входящий интерфейс (белый интернет):
     $IN_IF:
       dhcp4: false
       addresses: [$STATIC_IP/$SUBNET_MASK]
