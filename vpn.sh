@@ -105,7 +105,7 @@ install_packages() {
     apt-get upgrade -y || error_exit "Обновление системы не выполнено"
     log_info "Обновление системы прошло"
     
-    apt-get install -y net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
+    apt-get install -y net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
 
     # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
@@ -238,16 +238,56 @@ select_interfaces() {
 
 # Настройка netplan
 configure_netplan() {
-    log_info "Настраиваю сетевые подключения через netplan"
-    rm -f /etc/netplan/*.yaml
+    ### Отключение cloud-init ###
+    log_info "Проверка статуса управления сетью cloud-init..."
+    local cloud_config_file="/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg"
+    if [ ! -f "$cloud_config_file" ]; then
+        echo "network: {config: disabled}" > "$cloud_config_file"
+        log_info "Управление сетью в cloud-init было отключено."
+    else
+        log_info "Управление сетью в cloud-init уже отключено."
+    fi
 
+    ### Удаление старых netplan ###
+    log_info "Поиск сторонних конфигурационных файлов Netplan..."
+    local netplan_dir="/etc/netplan"
+    local main_config_file="01-network-manager-all.yaml"
+    local has_other_configs=false
+    
+    for file in "$netplan_dir"/*.yaml; do
+        [ -f "$file" ] || continue
+        if [ "$(basename "$file")" != "$main_config_file" ]; then
+            has_other_configs=true
+            break
+        fi
+    done
+
+    if [ "$has_other_configs" = true ]; then
+        local backup_dir="$netplan_dir/backup_$(date +%F_%H%M%S)"
+        log_warning "Обнаружены сторонние файлы конфигурации. Создаю резервную копию."
+        mkdir -p "$backup_dir"
+        
+        for file in "$netplan_dir"/*.yaml; do
+            [ -f "$file" ] || continue
+            if [ "$(basename "$file")" != "$main_config_file" ]; then
+                log_info "Архивирую файл: $(basename "$file")"
+                mv "$file" "$backup_dir/"
+            fi
+        done
+        rm -f "$netplan_dir/$main_config_file"
+    else
+        log_info "Сторонние файлы конфигурации не найдены. Очищаю предыдущие настройки."
+        rm -f "$netplan_dir"/*.yaml
+    fi
+    
+    ### Сбор данных и генерация новой конфигурации ###
     echo "Выберите вариант настройки входящего интерфейса:"
     echo "1) Получать IP по DHCP"
     echo "2) Статическая настройка (ввод параметров вручную)"
     read -r -p "Ваш выбор [1/2]: " net_choice
 
     if [ "$net_choice" == "1" ]; then
-        cat <<EOF > /etc/netplan/01-network-manager-all.yaml
+cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 ###################################################
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
@@ -269,7 +309,7 @@ EOF
         read -r -p "Введите шлюз: " GATEWAY
         read -r -p "Введите DNS1: " DNS1
         read -r -p "Введите DNS2: " DNS2
-        cat <<EOF > /etc/netplan/01-network-manager-all.yaml
+cat <<EOF > /etc/netplan/01-network-manager-all.yaml
 ###################################################
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
@@ -293,17 +333,38 @@ EOF
         error_exit "Неверный выбор варианта настройки сети"
     fi
 
-    chmod 600 /etc/netplan/01-network-manager-all.yaml
-    netplan apply || error_exit "Netplan не был применен"
-    log_info "Настройки netplan применены"
-    log_info "Запуск проверки интернет соединения"
-    echo "Ожидаю 20 секунд для стабилизации соединения..."
-    sleep 20
-    response=$(curl -s -o /dev/null -w "%{http_code}" http://www.google.com)
-    if [ "$response" -ne 200 ]; then
-        error_exit "Нет доступа в интернет"
+    chmod 600 "$netplan_dir/$main_config_file"
+    log_info "Применяю настройки netplan..."
+    netplan apply || error_exit "Критическая ошибка: не удалось применить конфигурацию Netplan."
+    log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
+    sleep 5 # Небольшая пауза перед проверкой
+
+    ### Проверка соединения ###
+    log_info "Запуск диагностики сетевого подключения..."
+    local ip_check_host="8.8.8.8"
+    local domain_check_host="google.com"
+    local ip_status="НЕУДАЧНО"
+    local domain_status="НЕУДАЧНО"
+
+    # Проверка доступности по IP
+    if ping -c 1 -W 2 "$ip_check_host" &> /dev/null; then
+        ip_status="УДАЧНО"
     fi
-    log_info "Интернет-соединение успешно установлено"
+
+    # Проверка доступности по доменному имени
+    if ping -c 1 -W 2 "$domain_check_host" &> /dev/null; then
+        domain_status="УДАЧНО"
+    fi
+
+    log_info "Результаты диагностики: Пинг $ip_check_host - $ip_status, Пинг $domain_check_host - $domain_status"
+
+    if [ "$ip_status" == "НЕУДАЧНО" ]; then
+        error_exit "Нет доступа к сети. Проверьте IP-адрес, маску, шлюз и физическое подключение."
+    elif [ "$domain_status" == "НЕУДАЧНО" ]; then
+        error_exit "Есть доступ к сети, но не работает DNS. Проверьте настройки DNS-серверов."
+    fi
+
+    log_info "[+] Интернет-соединение успешно установлено и работает корректно."
 }
 
 # Настройка DNS
