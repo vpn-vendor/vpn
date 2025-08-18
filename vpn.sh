@@ -835,6 +835,77 @@ EOF
     log_info "Права для /var/www/html/data/home_metrics_daemon.json установлены"
 }
 
+configure_mtu_daemon() {
+    log_info "Настраиваю демон для динамического управления MTU и TCPMSS на tun0"
+
+    # Создаём скрипт демона
+    cat <<'EOF' > /usr/local/bin/vpn_mtu_daemon.sh
+#!/bin/bash
+# Демон для мониторинга интерфейса tun0 и применения настроек MTU и TCPMSS (v1.1)
+
+# Целевые значения
+TARGET_INTERFACE="tun0"
+TARGET_MTU="1360"
+# Правило TCPMSS для проверки и добавления
+IPTABLES_RULE=(-A FORWARD -o "$TARGET_INTERFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu)
+# Тег для системного лога
+LOG_TAG="vpn-mtu-daemon"
+
+while true; do
+    # Проверяем, существует ли интерфейс
+    if ip link show "$TARGET_INTERFACE" &> /dev/null; then
+        
+        # --- Проверка и установка MTU (более надежный метод) ---
+        current_mtu=$(ip link show "$TARGET_INTERFACE" | grep -oP 'mtu \K\d+')
+        
+        if [[ "$current_mtu" -ne "$TARGET_MTU" ]]; then
+            # Устанавливаем корректный MTU
+            ip link set dev "$TARGET_INTERFACE" mtu "$TARGET_MTU"
+            # Логируем через системный журнал
+            logger -t "$LOG_TAG" "Интерфейс $TARGET_INTERFACE обнаружен. Установлен MTU: $TARGET_MTU."
+        fi
+
+        # --- Проверка и добавление правила iptables ---
+        if ! iptables -C "${IPTABLES_RULE[@]}" &> /dev/null; then
+            # Правило отсутствует, добавляем его
+            iptables "${IPTABLES_RULE[@]}"
+            logger -t "$LOG_TAG" "Добавлено правило TCPMSS для $TARGET_INTERFACE."
+        fi
+    fi
+    
+    # Пауза перед следующей проверкой
+    sleep 15
+done
+EOF
+
+    chmod +x /usr/local/bin/vpn_mtu_daemon.sh || error_exit "Не удалось сделать vpn_mtu_daemon.sh исполняемым"
+    log_info "Скрипт /usr/local/bin/vpn_mtu_daemon.sh создан"
+
+    # Создаём systemd unit для демона
+    cat <<EOF > /etc/systemd/system/vpn_mtu_daemon.service
+[Unit]
+Description=VPN MTU and TCPMSS Fix Daemon
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/vpn_mtu_daemon.sh
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    log_info "Файл /etc/systemd/system/vpn_mtu_daemon.service создан"
+
+    # Перезагружаем демоны systemd, включаем и запускаем наш сервис
+    systemctl daemon-reload || error_exit "Не удалось перезагрузить демоны systemd"
+    systemctl enable vpn_mtu_daemon.service || error_exit "Не удалось включить vpn_mtu_daemon.service"
+    systemctl start vpn_mtu_daemon.service || error_exit "Не удалось запустить vpn_mtu_daemon.service"
+    log_info "Демон vpn_mtu_daemon.service настроен и запущен"
+}
+
 # Функция финальных доработок (права на папки, создание файла заметок)
 finalize_setup() {
     log_info "Выполняю финальные доработки"
@@ -873,6 +944,7 @@ remove_configuration() {
         "apache2"
         "shellinabox"
         "ping_daemon.service"
+        "vpn_mtu_daemon.service"
         "dnsmasq"
     )
     for service in "${services[@]}"; do
@@ -891,6 +963,9 @@ remove_configuration() {
     # Удаляем конфигурационные файлы и директории, связанные с настройкой
     rm -rf /etc/openvpn /etc/wireguard /var/www/html
     rm -f /etc/dhcp/dhcpd.conf /etc/default/isc-dhcp-server /var/lib/dhcp/dhcpd.leases
+    rm -f /etc/systemd/system/vpn_mtu_daemon.service
+    rm -f /usr/local/bin/vpn_mtu_daemon.sh
+    rm -f /var/log/vpn_mtu_daemon.log
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer || log_error "Не удалось удалить остатки конфигураций служб"
     log_info "Удалены остатки конфигураций служб"
 
@@ -1049,6 +1124,7 @@ preselect_interfaces
 configure_dns
 configure_dhcp
 configure_iptables
+configure_mtu_daemon
 configure_vpn
 configure_web_interface
 configure_apache
