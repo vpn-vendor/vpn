@@ -1,12 +1,12 @@
 #!/bin/bash
 # =============================================================================
 # Поддержка ТОЛЬКО Ubuntu 22.04 (чистая установка)
-# Версия: 2.5.1
+# Версия: 2.5.2 (с модификацией для PPPoE)
 # =============================================================================
 
 # Проверка прав root
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Ошибка: Скрипт должен быть запущен от root. Завершение." >&2
+  echo "ОШИБКА!: Скрипт должен быть запущен от root через sudo. Завершение..." >&2
   exit 1
 fi
 
@@ -42,7 +42,7 @@ error_exit() {
     SCRIPT_ERROR=1
     echo -e "\n${YELLOW}Ход выполнения:${NC}"
     for step in "${STEP_LOG[@]}"; do
-         echo -e "$step"
+        echo -e "$step"
     done
     echo -e "\n[Завершение скрипта]"
     exit 1
@@ -55,6 +55,31 @@ check_root() {
     fi
 }
 
+# Смена зеркал на глобальные
+echo ""
+echo "[*] Смена зеркал на глобальные..."
+echo ""
+
+# Заменяем ru.archive.ubuntu.com, если нашли
+sed -i 's|http://ru.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list
+
+# Обновляем mirrors в Mint-стиле
+OFFICIAL_LIST="/etc/apt/sources.list.d/official-package-repositories.list"
+if [ -f "$OFFICIAL_LIST" ]; then
+    cp "$OFFICIAL_LIST" "${OFFICIAL_LIST}.bak"
+    cat <<EOF > "$OFFICIAL_LIST"
+deb http://packages.linuxmint.com virginia main upstream import backport
+deb http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
+deb http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+EOF
+    echo "[OK] Зеркала успешно заменены (Linux Mint / Ubuntu)"
+else
+    echo "[INFO] Файл $OFFICIAL_LIST не найден, смена зеркал пропущена"
+fi
+
+
 # Функция переключения сетевого управления на systemd-networkd
 configure_network_services() {
     log_info "Переключаю сетевое управление на systemd-networkd"
@@ -66,7 +91,7 @@ configure_network_services() {
     systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
     systemctl start systemd-networkd.service || error_exit "Не удалось запустить systemd-networkd"
 
-    # Удаляем старые netplan-конфигурации с renderer NetworkManager 
+    # Удаляем старые netplan-конфигурации с renderer NetworkManager
     rm -f /etc/netplan/*.yml
 
     log_info "Сетевые службы переключены на systemd-networkd"
@@ -80,7 +105,7 @@ install_packages() {
     apt-get upgrade -y || error_exit "Обновление системы не выполнено"
     log_info "Обновление системы прошло"
     
-    apt-get install -y net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
+    apt-get install -y ppp net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
 
     # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
@@ -226,7 +251,7 @@ configure_netplan() {
     ### Удаление старых netplan ###
     log_info "Поиск сторонних конфигурационных файлов Netplan..."
     local netplan_dir="/etc/netplan"
-    local main_config_file="01-network-manager-all.yaml"
+    local main_config_file="99-vpn-script.yaml"
     local has_other_configs=false
     
     for file in "$netplan_dir"/*.yaml; do
@@ -239,7 +264,7 @@ configure_netplan() {
 
     if [ "$has_other_configs" = true ]; then
         local backup_dir="$netplan_dir/backup_$(date +%F_%H%M%S)"
-        log_warning "Обнаружены сторонние файлы конфигурации. Создаю резервную копию."
+        echo -e "${YELLOW}[WARNING]${NC} Обнаружены сторонние файлы конфигурации. Создаю резервную копию."
         mkdir -p "$backup_dir"
         
         for file in "$netplan_dir"/*.yaml; do
@@ -257,22 +282,25 @@ configure_netplan() {
     
     ### Сбор данных и генерация новой конфигурации ###
     echo "Выберите вариант настройки входящего интерфейса:"
-    echo "1) Получать IP по DHCP"
+    echo "1) Получать IP по DHCP от провайдера/сервера"
     echo "2) Статическая настройка (ввод параметров вручную)"
-    read -r -p "Ваш выбор [1/2]: " net_choice
+    echo "3) PPPoE-соединение от провайдера (логин/пароль)"
+    read -r -p "Ваш выбор [1/2/3]: " net_choice
+
+    local netplan_config_path="/etc/netplan/99-vpn-script.yaml"
 
     if [ "$net_choice" == "1" ]; then
-cat <<EOF > /etc/netplan/01-network-manager-all.yaml
+cat <<EOF > "$netplan_config_path"
 ###################################################
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
   version: 2
   renderer: networkd
   ethernets:
-  # Входящий интерфейс (белый интернет):
+    # Входящий интерфейс (белый интернет):
     $IN_IF:
       dhcp4: true
-  # Выходящий интерфейс (локальная сеть):
+    # Выходящий интерфейс (локальная сеть):
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
@@ -280,39 +308,86 @@ network:
 EOF
     elif [ "$net_choice" == "2" ]; then
         read -r -p "Введите статический IP для входящего интерфейса: " STATIC_IP
-        read -r -p "Введите маску (ТОЛЬКО 2 цифры например 24, а не 255.255.255.224): " SUBNET_MASK
+        read -r -p "Введите префикс (если провайдер например выдал 255.255.255.224, введите 27): " SUBNET_MASK
         read -r -p "Введите шлюз: " GATEWAY
         read -r -p "Введите DNS1: " DNS1
         read -r -p "Введите DNS2: " DNS2
-cat <<EOF > /etc/netplan/01-network-manager-all.yaml
+cat <<EOF > "$netplan_config_path"
 ###################################################
 # Файл автоматически сгенерирован скриптом vpn.sh
 network:
   version: 2
   renderer: networkd
   ethernets:
-  # Входящий интерфейс (белый интернет):
+    # Входящий интерфейс (белый интернет):
     $IN_IF:
       dhcp4: false
       addresses: [$STATIC_IP/$SUBNET_MASK]
-      gateway4: $GATEWAY
+      routes:
+        - to: default
+          via: $GATEWAY
       nameservers:
         addresses: [$DNS1, $DNS2]
-  # Выходящий интерфейс (локальная сеть):
+    # Выходящий интерфейс (локальная сеть):
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
       optional: true
 EOF
+    elif [ "$net_choice" == "3" ]; then
+        read -r -p "Введите логин PPPoE: " PPPOE_USER
+        read -r -s -p "Введите пароль PPPoE: " PPPOE_PASS
+        echo ""
+cat <<EOF > "$netplan_config_path"
+###################################################
+# Файл автоматически сгенерирован скриптом vpn.sh
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    # Входящий интерфейс (транспорт для PPPoE):
+    $IN_IF:
+      dhcp4: no
+      dhcp6: no
+    # Выходящий интерфейс (локальная сеть):
+    $OUT_IF:
+      dhcp4: no
+      addresses: [$LOCAL_IP/24]
+      optional: true
+  pppoes:
+    ppp0:
+      interface: $IN_IF
+      username: "$PPPOE_USER"
+      password: "$PPPOE_PASS"
+      # Устанавливаем этот маршрут как основной для сервера
+      default-route: true
+      # Автоматически использовать DNS провайдера
+      use-peer-dns: true
+EOF
     else
         error_exit "Неверный выбор варианта настройки сети"
     fi
 
-    chmod 600 "$netplan_dir/$main_config_file"
+    chmod 600 "$netplan_config_path"
     log_info "Применяю настройки netplan..."
     netplan apply || error_exit "Критическая ошибка: не удалось применить конфигурацию Netplan."
-    log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
-    sleep 5 # Небольшая пауза перед проверкой
+
+    # Ожидание для PPPoE-соединения
+    if [ "$net_choice" == "3" ]; then
+        log_info "Ожидаю установки PPPoE-соединения и появления интерфейса ppp0..."
+        local ppp_wait_time=0
+        while ! ip link show ppp0 &>/dev/null; do
+            sleep 1
+            ppp_wait_time=$((ppp_wait_time + 1))
+            if [ "$ppp_wait_time" -ge 30 ]; then
+                error_exit "Интерфейс ppp0 не появился в течение 30 секунд. Проверьте логин, пароль и подключение."
+            fi
+        done
+        log_info "Интерфейс ppp0 успешно поднят."
+    else
+        log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
+        sleep 15 # Задержка для DHCP/Static
+    fi
 
     ### Проверка соединения ###
     log_info "Запуск диагностики сетевого подключения..."
@@ -637,13 +712,13 @@ def scan_network(interface):
     try:
         # Запускаем arp-scan для указанного интерфейса
         result = subprocess.run(['sudo', 'arp-scan', '--interface=' + interface, '--localnet'],
-                                capture_output=True, text=True, timeout=30)
+                                  capture_output=True, text=True, timeout=30)
         output = result.stdout
     except Exception as e:
         return {"error": str(e)}
     
     devices = []
-    # Пример строки: "192.168.1.10    00:11:22:33:44:55    Some Vendor Inc."
+    # Пример строки: "192.168.1.10   00:11:22:33:44:55   Some Vendor Inc."
     pattern = re.compile(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f:]+)\s+(.*)')
     for line in output.splitlines():
         m = pattern.match(line)
@@ -1065,6 +1140,7 @@ check_execution() {
 # --- Основная часть скрипта ---
 check_root
 
+
 echo ""
 echo -e "${BLUE}        .^~!!!~.                                                             .J:                    ${NC}"
 echo -e "${BLUE}       ?5777~!?P7 ..    .    ::    . ::           .    .   ::.   . .:.    .:.:@~   :::    . :.      ${NC}"
@@ -1075,7 +1151,7 @@ echo -e "${BLUE}      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???! 
 echo -e "${BLUE}       :~!77!~            7P             :??????J^                                                  ${NC}"
 echo ""
 echo -e "${YELLOW}==============================================${NC}"
-echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.1)${NC}"
+echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.2)${NC}"
 echo -e "${YELLOW}==============================================${NC}"
 echo ""
 echo "Выберите действие:"
