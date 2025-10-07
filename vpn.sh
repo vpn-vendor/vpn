@@ -1,7 +1,7 @@
 #!/bin/bash
 # =============================================================================
-# Поддержка ТОЛЬКО Ubuntu 22.04 (чистая установка)
-# Версия: 2.5.2 (с модификацией для PPPoE)
+# Скрипт поддерживает ТОЛЬКО Ubuntu 22.04 (чистая установка без посторонних скриптов установленных ранее!)
+# Версия: 2.5.2 (добавлена поддержка pppoe)
 # =============================================================================
 
 # Проверка прав root
@@ -23,6 +23,7 @@ NC='\033[0m' # No Color
 # Глобальные переменные для логирования
 STEP_LOG=()
 SCRIPT_ERROR=0
+net_choice=""
 
 # Функция для логирования успешных сообщений
 log_info() {
@@ -309,36 +310,32 @@ network:
       addresses: [$LOCAL_IP/24]
       optional: true
 EOF
+
     elif [ "$net_choice" == "3" ]; then
         read -r -p "Введите логин PPPoE: " PPPOE_USER
-        read -r -s -p "Введите пароль PPPoE: " PPPOE_PASS
+        read -s -p "Введите пароль PPPoE: " PPPOE_PASS
         echo ""
 cat <<EOF > "$netplan_config_path"
 ###################################################
 # Файл автоматически сгенерирован скриптом vpn.sh
+# Настраивает только физические интерфейсы.
+# PPPoE будет настроен напрямую через pppd.
 network:
   version: 2
   renderer: networkd
   ethernets:
     # Входящий интерфейс (транспорт для PPPoE):
+    # Просто активируем интерфейс, не назначая IP.
     $IN_IF:
       dhcp4: no
       dhcp6: no
     # Выходящий интерфейс (локальная сеть):
     $OUT_IF:
-      dhcp4: no
+      dhcp4: false
       addresses: [$LOCAL_IP/24]
       optional: true
-  pppoes:
-    ppp0:
-      interface: $IN_IF
-      username: "$PPPOE_USER"
-      password: "$PPPOE_PASS"
-      # Устанавливаем этот маршрут как основной для сервера
-      default-route: true
-      # Автоматически использовать DNS провайдера
-      use-peer-dns: true
 EOF
+
     else
         error_exit "Неверный выбор варианта настройки сети"
     fi
@@ -347,49 +344,66 @@ EOF
     log_info "Применяю настройки netplan..."
     netplan apply || error_exit "Критическая ошибка: не удалось применить конфигурацию Netplan."
 
-    # Ожидание для PPPoE-соединения
-    if [ "$net_choice" == "3" ]; then
-        log_info "Ожидаю установки PPPoE-соединения и появления интерфейса ppp0..."
-        local ppp_wait_time=0
-        while ! ip link show ppp0 &>/dev/null; do
-            sleep 1
-            ppp_wait_time=$((ppp_wait_time + 1))
-            if [ "$ppp_wait_time" -ge 30 ]; then
-                error_exit "Интерфейс ppp0 не появился в течение 30 секунд. Проверьте логин, пароль и подключение."
-            fi
-        done
-        log_info "Интерфейс ppp0 успешно поднят."
-    else
-        log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
-        sleep 15 # Задержка для DHCP/Static
+    log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
+    sleep 15 # Задержка для DHCP/Static
+}
+
+# Настраиваем PPPoE
+configure_pppd_direct() {
+    log_info "Настраиваю PPPoE-соединение напрямую через pppd (метод провайдера)"
+    
+    local peer_file="/etc/ppp/peers/dsl-provider"
+
+    # Создаем peer-файл
+    cat <<EOF > "$peer_file"
+noauth
+defaultroute
+replacedefaultroute
+hide-password
+noipdefault
+persist
+plugin rp-pppoe.so $IN_IF
+user "$PPPOE_USER"
+usepeerdns
+mtu 1492
+mru 1492
+EOF
+    if [ $? -ne 0 ]; then
+        error_exit "Не удалось создать peer-файл $peer_file"
     fi
+    log_info "Peer-файл $peer_file успешно создан"
 
-    ### Проверка соединения ###
-    log_info "Запуск диагностики сетевого подключения..."
-    local ip_check_host="8.8.8.8"
-    local domain_check_host="google.com"
-    local ip_status="НЕУДАЧНО"
-    local domain_status="НЕУДАЧНО"
-
-    # Проверка доступности по IP
-    if ping -c 1 -W 2 "$ip_check_host" &> /dev/null; then
-        ip_status="УДАЧНО"
+    # Безопасно записываем учетные данные в /etc/ppp/*-secrets
+    (umask 077; echo "\"$PPPOE_USER\" * \"$PPPOE_PASS\"" > /etc/ppp/chap-secrets)
+    if [ $? -ne 0 ]; then
+        error_exit "Не удалось записать данные в /etc/ppp/chap-secrets"
     fi
-
-    # Проверка доступности по доменному имени
-    if ping -c 1 -W 2 "$domain_check_host" &> /dev/null; then
-        domain_status="УДАЧНО"
+    
+    (umask 077; echo "\"$PPPOE_USER\" * \"$PPPOE_PASS\"" > /etc/ppp/pap-secrets)
+    if [ $? -ne 0 ]; then
+        error_exit "Не удалось записать данные в /etc/ppp/pap-secrets"
     fi
+    log_info "Учетные данные PPPoE сохранены"
 
-    log_info "Результаты диагностики: Пинг $ip_check_host - $ip_status, Пинг $domain_check_host - $domain_status"
+    # Включаем автозапуск соединения
+    systemctl enable ppp@dsl-provider.service >/dev/null 2>&1 || log_info "Автозапуск PPPoE (ppp@dsl-provider.service) уже включен или не требует включения."
+    log_info "Автозапуск PPPoE-соединения настроен"
 
-    if [ "$ip_status" == "НЕУДАЧНО" ]; then
-        error_exit "Нет доступа к сети. Проверьте IP-адрес, маску, шлюз и физическое подключение."
-    elif [ "$domain_status" == "НЕУДАЧНО" ]; then
-        error_exit "Есть доступ к сети, но не работает DNS. Проверьте настройки DNS-серверов."
-    fi
+    # Поднять соединение
+    log_info "Запускаю PPPoE-соединение (pon dsl-provider)..."
+    pon dsl-provider || error_exit "Команда 'pon dsl-provider' завершилась с ошибкой. Проверьте системные логи."
 
-    log_info "[+] Интернет-соединение успешно установлено и работает корректно."
+    # Ожидаем появления интерфейса ppp0
+    log_info "Ожидаю появления интерфейса ppp0..."
+    local ppp_wait_time=0
+    while ! ip link show ppp0 &>/dev/null; do
+        sleep 1
+        ppp_wait_time=$((ppp_wait_time + 1))
+        if [ "$ppp_wait_time" -ge 45 ]; then
+            error_exit "Интерфейс ppp0 не появился в течение 45 секунд. Проверьте логи ('plog' или 'journalctl -u ppp@dsl-provider.service')."
+        fi
+    done
+    log_info "Интерфейс ppp0 успешно поднят."
 }
 
 # Настройка DNS
@@ -438,12 +452,31 @@ EOF
 
 # Настройка iptables и NAT
 configure_iptables() {
-    log_info "Настраиваю iptables (MASQUERADE)"
+    log_info "Настраиваю iptables со строгим режимом KILL SWITCH"
+    
+    # Включаем IP-форвардинг (необходимо для работы роутера)
     sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
     sysctl -p || error_exit "Ошибка применения sysctl"
-    iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE || error_exit "Не удалось настроить iptables"
+
+    # 1. Устанавливаем политику по умолчанию для всего транзитного трафика в DROP (ЗАПРЕТИТЬ)
+    # Это сердце Kill Switch. Все, что не разрешено явно, будет заблокировано.
+    iptables -P FORWARD DROP
+    log_info "Политика FORWARD по умолчанию установлена в DROP"
+
+    # 2. Разрешаем трафику из локальной сети ($OUT_IF) уходить в VPN-туннель (tun0)
+    iptables -A FORWARD -i "$OUT_IF" -o tun0 -j ACCEPT
+
+    # 3. Разрешаем ответному трафику возвращаться из VPN-туннеля (tun0) в локальную сеть
+    iptables -A FORWARD -i tun0 -o "$OUT_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
+    log_info "Правила FORWARD для tun0 (VPN) добавлены"
+
+    # 4. Настраиваем NAT (маскарадинг) только для трафика, уходящего в VPN-туннель
+    iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE
+    log_info "Правило NAT для tun0 добавлено"
+
+    # Сохраняем все правила
     iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
-    log_info "iptables настроены"
+    log_info "Правила iptables для Kill Switch сохранены"
 }
 
 # Настройка VPN (OpenVPN)
@@ -957,6 +990,17 @@ finalize_setup() {
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
+check_internet_connection() {
+    log_info "Финальная проверка интернет-соединения..."
+    if ! ping -c 2 -W 5 "8.8.8.8" &> /dev/null; then
+        error_exit "Нет доступа к сети. Проверьте IP-адрес, шлюз и физическое подключение."
+    fi
+    if ! ping -c 2 -W 5 "google.com" &> /dev/null; then
+        error_exit "Есть доступ к сети, но не работает DNS. Проверьте настройки DNS."
+    fi
+    log_info "Интернет-соединение работает корректно."
+}
+
 # Удаление и откат изменений
 remove_configuration() {
 
@@ -1147,6 +1191,12 @@ fi
 install_packages
 configure_network_services
 preselect_interfaces
+
+# Выбор PPPOE-соединения
+if [ "$net_choice" == "3" ]; then
+    configure_pppd_direct
+fi
+
 configure_dns
 configure_dhcp
 configure_iptables
@@ -1160,6 +1210,7 @@ configure_metrics_services
 telegram_bot
 configure_home_metrics_daemon
 finalize_setup
+check_internet_connection
 
 # Финальная проверка с анимацией
 check_execution
