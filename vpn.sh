@@ -870,7 +870,7 @@ configure_mtu_daemon() {
 
 # Целевые значения
 TARGET_INTERFACE="tun0"
-TARGET_MTU="1360"
+TARGET_MTU="1280"
 # Правило TCPMSS для проверки и добавления
 IPTABLES_RULE=(-A FORWARD -o "$TARGET_INTERFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu)
 # Тег для системного лога
