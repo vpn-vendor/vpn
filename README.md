@@ -20,7 +20,7 @@
 
 ### ⚡️ Quick start ⚡️
 ```bash
- wget [https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh](https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh) -O vpn.sh && sudo bash vpn.sh
+ wget https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh -O vpn.sh && sudo bash vpn.sh
 ```
 
 ---
@@ -73,7 +73,7 @@
 1.  **Загрузка и запуск**
     Подключитесь к вашему серверу по SSH и выполните следующую команду. Она скачает скрипт и запустит его с правами администратора:
     ```bash
-    wget [https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh](https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh) -O vpn.sh && sudo bash vpn.sh
+    wget https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh -O vpn.sh && sudo bash vpn.sh
     ```
     > **Возможная проблема:** Если `wget` выдает ошибку, связанную с `HSTS`, выполните `rm -f ~/.wget-hsts` и повторите команду.
 
