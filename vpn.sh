@@ -1,43 +1,47 @@
 #!/bin/bash
-# =============================================================================
-# Скрипт поддерживает ТОЛЬКО Ubuntu 22.04 (чистая установка без посторонних скриптов установленных ранее!)
-# Версия: 2.5.2 (добавлена поддержка pppoe)
-# =============================================================================
+# ==============================================================================
+#
+#   Скрипт автоматической настройки VPN-сервера
+#   Поддерживаемая ОС: Ubuntu 22.04 LTS (чистая установка)
+#
+# ==============================================================================
+#
+#   Версия: 2.5.3
+#
+#   [+] Добавлена поддержка PPPoE-соединения.
+#   [+] Добавлено автомонтирование USB-накопителей.
+#   [+] Автоматическое копирование vpn.sh с USB-накопителя.
+#
+# ==============================================================================
 
-# Проверка прав root
-if [ "$(id -u)" -ne 0 ]; then
-  echo "ОШИБКА!: Скрипт должен быть запущен от root через sudo. Завершение..." >&2
-  exit 1
-fi
-
-# Устанавливаем неинтерактивный режим для apt
+# Неинтерактивный режим для apt
 export DEBIAN_FRONTEND=noninteractive
 
-# ANSI-коды для цветов
+# Цветовые коды ANSI
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Глобальные переменные для логирования
+# Глобальные переменные
 STEP_LOG=()
 SCRIPT_ERROR=0
 net_choice=""
 
-# Функция для логирования успешных сообщений
+# Логирование успеха
 log_info() {
     echo -e "${GREEN}[OK]${NC} $1 - УСПЕШНО"
     STEP_LOG+=("${GREEN}[OK]${NC} $1 - УСПЕШНО")
 }
 
-# Функция для логирования ошибок
+# Логирование ошибки
 log_error() {
     echo -e "${RED}[ERROR]${NC} $1 - ОШИБКА" >&2
     STEP_LOG+=("${RED}[ERROR]${NC} $1 - ОШИБКА")
 }
 
-# Функция завершения скрипта при ошибке с выводом хода выполнения
+# Аварийный выход
 error_exit() {
     log_error "$1"
     SCRIPT_ERROR=1
@@ -56,18 +60,18 @@ check_root() {
     fi
 }
 
-# Функция переключения сетевого управления на systemd-networkd
+# Переключение на systemd-networkd
 configure_network_services() {
     log_info "Переключаю сетевое управление на systemd-networkd"
-    # Останавливаем и отключаем NetworkManager
+    # Отключение NetworkManager
     systemctl stop NetworkManager.service 2>/dev/null || log_info "NetworkManager не установлен"
     systemctl disable NetworkManager.service 2>/dev/null || log_info "NetworkManager не установлен/отключение службы"
 
-    # Включаем и запускаем systemd-networkd
+    # Включение systemd-networkd
     systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
     systemctl start systemd-networkd.service || error_exit "Не удалось запустить systemd-networkd"
 
-    # Удаляем старые netplan-конфигурации с renderer NetworkManager
+    # Очистка старых конфигураций netplan
     rm -f /etc/netplan/*.yml
 
     log_info "Сетевые службы переключены на systemd-networkd"
@@ -76,22 +80,27 @@ configure_network_services() {
 # Установщик пакетов
 install_packages() {
     log_info "Инициализация запуска обновлений + установки программ"
+    # Обновление списка пакетов
     apt-get update || error_exit "Обновление репозиториев не выполнено"
     
-    apt-get upgrade -y || error_exit "Обновление системы не выполнено"
+    # Обновление системы
+    log_info "Запускаю полное обновление системы в автоматическом режиме..."
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade -y || error_exit "Обновление системы не выполнено"
     log_info "Обновление системы прошло"
     
-    apt-get install -y ppp net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
+    # Установка пакетов
+    log_info "Устанавливаю необходимые пакеты в автоматическом режиме..."
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y ppp net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
 
-    # Включаем необходимые модули Apache: proxy, proxy_http, authnz_pam, rewrite
+    # Включение модулей Apache
     a2enmod proxy || error_exit "Не удалось включить модуль proxy"
     a2enmod proxy_http || error_exit "Не удалось включить модуль proxy_http"
     a2enmod rewrite || error_exit "Не удалось включить модуль rewrite"
     a2enmod authnz_pam || error_exit "Не удалось включить модуль authnz_pam"
     systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после включения модулей"
 
-    # Если установлен dnsmasq – удаляем его
+    # Удаление dnsmasq (если установлен)
     if dpkg -l | grep -qw dnsmasq; then
         log_info "Удаление dnsmasq"
         systemctl stop dnsmasq 2>/dev/null
@@ -105,7 +114,7 @@ install_packages() {
         log_info "dnsmasq удалён"
     fi
 
-    # Если обнаружен openvswitch-switch – удаляем его
+    # Удаление openvswitch-switch (если установлен)
     if dpkg -l | grep -q openvswitch-switch; then
         log_info "Удаление openvswitch-switch"
         systemctl stop openvswitch-switch
@@ -120,21 +129,22 @@ install_packages() {
     fi
 }
 
+# Меню выбора режима настройки Netplan
 preselect_interfaces() {
     echo "Какое действие выполнить с NETPLAN?"
     echo "1. Полная настройка."
     echo "2. Настроить только NETPLAN и пропустить основную настройку."
-    echo "3. Пропустить настройку NETPLAN и выполнить дальше основную настройку."
+    echo "3. Пропустить настройку NETPLAN и выполнить ТОЛЬКО основную настройку."
     read -r -p "Ваш выбор [1/2/3]: " netplan_choice
 
     case "$netplan_choice" in
         1)
-            # Полная настройка
+            # 1) Полная настройка
             select_interfaces
             configure_netplan
             ;;
         2)
-            # Настроить только NETPLAN и пропустить основную настройку.
+            # 2) Только настройка Netplan
             configure_network_services
             select_interfaces
             configure_netplan
@@ -142,7 +152,7 @@ preselect_interfaces() {
             exit 0
             ;;
         3)
-            # Пропустить настройку NETPLAN и выполнить дальше основную настройку.
+            # 3) Пропуск настройки (использование существующей)
             netplan_file=$(find /etc/netplan -maxdepth 1 -type f -name "*.yaml" | head -n 1)
             if [ -z "$netplan_file" ]; then
                 error_exit "Не найден netplan файл с расширением .yaml. Пожалуйста, настройте сетевые интерфейсы вручную."
@@ -167,7 +177,7 @@ preselect_interfaces() {
     esac
 }
 
-# Получение списка сетевых интерфейсов и выбор пользователем
+# Выбор сетевых интерфейсов
 select_interfaces() {
     echo -e "${GREEN}Получаю список сетевых интерфейсов...${NC}"
     all_interfaces=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://')
@@ -214,7 +224,7 @@ select_interfaces() {
 
 # Настройка netplan
 configure_netplan() {
-    ### Отключение cloud-init ###
+    # Отключение cloud-init
     log_info "Проверка статуса управления сетью cloud-init..."
     local cloud_config_file="/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg"
     if [ ! -f "$cloud_config_file" ]; then
@@ -224,7 +234,7 @@ configure_netplan() {
         log_info "Управление сетью в cloud-init уже отключено."
     fi
 
-    ### Удаление старых netplan ###
+    # Резервное копирование и очистка старых конфигов netplan
     log_info "Поиск сторонних конфигурационных файлов Netplan..."
     local netplan_dir="/etc/netplan"
     local main_config_file="99-vpn-script.yaml"
@@ -256,7 +266,7 @@ configure_netplan() {
         rm -f "$netplan_dir"/*.yaml
     fi
     
-    ### Сбор данных и генерация новой конфигурации ###
+    # Сбор данных
     echo "Выберите вариант настройки входящего интерфейса:"
     echo "1) Получать IP по DHCP от провайдера/сервера"
     echo "2) Статическая настройка (ввод параметров вручную)"
@@ -345,16 +355,16 @@ EOF
     netplan apply || error_exit "Критическая ошибка: не удалось применить конфигурацию Netplan."
 
     log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
-    sleep 15 # Задержка для DHCP/Static
+    sleep 15 # Пауза для стабилизации сети
 }
 
-# Настраиваем PPPoE
+# Настройка PPPoE
 configure_pppd_direct() {
-    log_info "Настраиваю PPPoE-соединение напрямую через pppd (метод провайдера)"
+    log_info "Настраиваю PPPoE-соединение напрямую через pppd"
     
     local peer_file="/etc/ppp/peers/dsl-provider"
 
-    # Создаем peer-файл
+    # Создание peer-файла
     cat <<EOF > "$peer_file"
 noauth
 defaultroute
@@ -373,7 +383,7 @@ EOF
     fi
     log_info "Peer-файл $peer_file успешно создан"
 
-    # Безопасно записываем учетные данные в /etc/ppp/*-secrets
+    # Сохранение учетных данных
     (umask 077; echo "\"$PPPOE_USER\" * \"$PPPOE_PASS\"" > /etc/ppp/chap-secrets)
     if [ $? -ne 0 ]; then
         error_exit "Не удалось записать данные в /etc/ppp/chap-secrets"
@@ -385,15 +395,38 @@ EOF
     fi
     log_info "Учетные данные PPPoE сохранены"
 
-    # Включаем автозапуск соединения
-    systemctl enable ppp@dsl-provider.service >/dev/null 2>&1 || log_info "Автозапуск PPPoE (ppp@dsl-provider.service) уже включен или не требует включения."
+    # Настройка автозапуска
+    systemctl enable ppp@dsl-provider.service >/dev/null 2>&1 || log_info "Автозапуск PPPoE (ppp@dsl-provider.service) уже включен."
     log_info "Автозапуск PPPoE-соединения настроен"
 
-    # Поднять соединение
+    log_info "Создаю systemd override для стабильного запуска PPPoE после перезагрузки"
+    
+    local override_dir="/etc/systemd/system/ppp@dsl-provider.service.d"
+    local override_file="${override_dir}/wait-for-network.conf"
+
+    # Создание директории для override
+    mkdir -p "$override_dir" || error_exit "Не удалось создать директорию $override_dir"
+
+    # Создание override-файла
+    cat <<EOF > "$override_file"
+[Unit]
+# Запуск после полной инициализации физических интерфейсов
+After=systemd-networkd-wait-online.service
+Wants=systemd-networkd-wait-online.service
+EOF
+    if [ $? -ne 0 ]; then
+        error_exit "Не удалось создать override-файл $override_file"
+    fi
+
+    # Перезагрузка конфигурации systemd
+    systemctl daemon-reload || error_exit "Не удалось выполнить systemctl daemon-reload"
+    log_info "Зависимость от готовности сети для PPPoE успешно добавлена"
+
+    # Запуск соединения
     log_info "Запускаю PPPoE-соединение (pon dsl-provider)..."
     pon dsl-provider || error_exit "Команда 'pon dsl-provider' завершилась с ошибкой. Проверьте системные логи."
 
-    # Ожидаем появления интерфейса ppp0
+    # Ожидание интерфейса ppp0
     log_info "Ожидаю появления интерфейса ppp0..."
     local ppp_wait_time=0
     while ! ip link show ppp0 &>/dev/null; do
@@ -409,9 +442,10 @@ EOF
 # Настройка DNS
 configure_dns() {
     log_info "Настраиваю DNS"
+    # Очистка старых DNS-настроек в resolved.conf
     sed -i '/^\[Resolve\]/,/^\[/ {/^\(DNS\|Domains\)=/d}' /etc/systemd/resolved.conf
     
-    # Перезапускаем systemd-resolved
+    # Применение настроек
     systemctl restart systemd-resolved || error_exit "Не удалось перезапустить systemd-resolved"
     log_info "DNS настроены через systemd-resolved"
 }
@@ -422,8 +456,10 @@ configure_dhcp() {
     DHCP_CONF="/etc/dhcp/dhcpd.conf"
     DHCP_DEFAULT="/etc/default/isc-dhcp-server"
 
+    # Резервное копирование конфига
     [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak"
 
+    # Генерация основного конфига dhcpd.conf
     cat <<EOF > "$DHCP_CONF"
 default-lease-time 600;
 max-lease-time 7200;
@@ -437,12 +473,14 @@ subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
 }
 EOF
 
+    # Указание рабочего интерфейса
     if grep -q "^INTERFACESv4=" "$DHCP_DEFAULT"; then
         sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$OUT_IF\"/" "$DHCP_DEFAULT"
     else
         echo "INTERFACESv4=\"$OUT_IF\"" >> "$DHCP_DEFAULT"
     fi
 
+    # Применение прав и перезапуск службы
     chown root:dhcpd /var/lib/dhcp/dhcpd.leases || error_exit "chown root:dhcpd /var/lib/dhcp/dhcpd.leases не был применен"
     chmod 664 /var/lib/dhcp/dhcpd.leases || error_exit "chmod 664 /var/lib/dhcp/dhcpd.leases не был применен"
     systemctl restart isc-dhcp-server || error_exit "isc-dhcp-server не был перезапущен"
@@ -450,36 +488,35 @@ EOF
     log_info "DHCP-сервер настроен"
 }
 
-# Настройка iptables и NAT
+# Настройка iptables (Kill Switch)
 configure_iptables() {
     log_info "Настраиваю iptables со строгим режимом KILL SWITCH"
     
-    # Включаем IP-форвардинг (необходимо для работы роутера)
+    # Включение IP-форвардинга
     sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
     sysctl -p || error_exit "Ошибка применения sysctl"
 
-    # 1. Устанавливаем политику по умолчанию для всего транзитного трафика в DROP (ЗАПРЕТИТЬ)
-    # Это сердце Kill Switch. Все, что не разрешено явно, будет заблокировано.
+    # Kill Switch
     iptables -P FORWARD DROP
     log_info "Политика FORWARD по умолчанию установлена в DROP"
 
-    # 2. Разрешаем трафику из локальной сети ($OUT_IF) уходить в VPN-туннель (tun0)
+    # Разрешение трафика из LAN в VPN (tun0)
     iptables -A FORWARD -i "$OUT_IF" -o tun0 -j ACCEPT
 
-    # 3. Разрешаем ответному трафику возвращаться из VPN-туннеля (tun0) в локальную сеть
+    # Разрешение ответного трафика из VPN в LAN
     iptables -A FORWARD -i tun0 -o "$OUT_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
     log_info "Правила FORWARD для tun0 (VPN) добавлены"
 
-    # 4. Настраиваем NAT (маскарадинг) только для трафика, уходящего в VPN-туннель
+    # Настройка NAT для VPN-трафика
     iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE
     log_info "Правило NAT для tun0 добавлено"
 
-    # Сохраняем все правила
+    # Сохранение правил
     iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
     log_info "Правила iptables для Kill Switch сохранены"
 }
 
-# Настройка VPN (OpenVPN)
+# Настройка автозапуска OpenVPN
 configure_vpn() {
     log_info "Настраиваю VPN (OpenVPN)"
     sed -i '/^#\s*AUTOSTART="all"/s/^#\s*//' /etc/default/openvpn
@@ -489,16 +526,16 @@ configure_vpn() {
 # Настройка веб-интерфейса
 configure_web_interface() {
     log_info "Настраиваю веб-интерфейс для управления VPN"
-    # Устанавливаем корректные права на директории конфигурации
+    # Установка прав на конфиги VPN
     chmod -R 755 /etc/openvpn /etc/wireguard
     chown -R www-data:www-data /etc/openvpn /etc/wireguard
 
-    # Для sudo-пользователей (при необходимости)
+    # Настройка прав sudo для www-data
     echo "www-data ALL=(root) NOPASSWD: /usr/bin/id" | tee -a /etc/sudoers
     echo "www-data ALL=(ALL) NOPASSWD: ALL" | tee -a /etc/sudoers
     echo "www-data ALL=(ALL) NOPASSWD: /bin/systemctl" | tee -a /etc/sudoers
 
-    # Клонируем обновлённый сайт (репозиторий web-cabinet)
+    # Клонирование репозитория веб-интерфейса из github
     rm -rf /var/www/html
     git clone https://github.com/vpn-vendor/web-cabinet.git /var/www/html || error_exit "Не удалось клонировать репозиторий веб-сайта"
     chown -R www-data:www-data /var/www/html
@@ -506,11 +543,11 @@ configure_web_interface() {
     log_info "Веб-сайт склонирован в /var/www/html"
 }
 
-# Функция настройки виртуального хоста Apache и базовой аутентификации
+# Настройка Apache
 configure_apache() {
     log_info "Настраиваю виртуальный хост Apache и базовую аутентификацию"
 
-    # Формируем новый конфиг виртуального хоста
+    # Создание конфига VirtualHost
     cat <<EOF > /etc/apache2/sites-available/000-default.conf
 <VirtualHost *:80>
     ServerAdmin webmaster@localhost
@@ -532,7 +569,7 @@ configure_apache() {
 EOF
     log_info "Конфигурация виртуального хоста Apache записана в /etc/apache2/sites-available/000-default.conf"
 
-    # Настраиваем .htaccess в /var/www/html
+    # Создание файла .htaccess
     cat <<'EOF' > /var/www/html/.htaccess
 <RequireAll>
     Require ip 192.168
@@ -555,105 +592,108 @@ RewriteRule ^(.*)$ index.php?page=$1 [QSA,L]
 EOF
     log_info ".htaccess создан и настроен в /var/www/html"
 
-    # Изменяем в /etc/apache2/apache2.conf блок для /var/www/ (AllowOverride)
+    # Включение поддержки .htaccess (AllowOverride)
     sed -i '/<Directory \/var\/www\/>/,/<\/Directory>/ s/AllowOverride None/AllowOverride All/' /etc/apache2/apache2.conf || error_exit "Не удалось изменить AllowOverride в apache2.conf"
     log_info "Обновлён /etc/apache2/apache2.conf: AllowOverride для /var/www/ теперь All"
 
+    # Применение настроек Apache
     systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после внесения изменений"
     log_info "Apache перезапущен"
 }
 
-# Функция настройки Shell In A Box (для SSH консоли)
+# Настройка Shell In A Box (требуется для работы веб-консоли)
 configure_shellinabox() {
     log_info "Настраиваю Shell In A Box"
-    # Устанавливаем shellinabox (если ещё не установлен)
+    # Установка и запуск службы
     apt-get install -y shellinabox || error_exit "Не удалось установить shellinabox"
     systemctl enable shellinabox
     systemctl start shellinabox
 
-    # Переопределяем конфигурацию в /etc/default/shellinabox для рабочего варианта
+    # Создание файла конфигурации
     cat <<EOF > /etc/default/shellinabox
-# Should shellinaboxd start automatically
+# Автоматический запуск демона
 SHELLINABOX_DAEMON_START=1
 
-# TCP port that shellinaboxd's webserver listens on
+# Порт для веб-сервера
 SHELLINABOX_PORT=4200
 
-# Параметры: отключаем SSL, отключаем звуковой сигнал
+# Параметры командной строки (отключение SSL и звука)
 SHELLINABOX_ARGS="--no-beep --disable-ssl"
 EOF
+    
+    # Применение новой конфигурации
     systemctl restart shellinabox || error_exit "Не удалось перезапустить shellinabox"
     log_info "Shell In A Box настроен и перезапущен"
 }
 
-# Функция настройки демона пинга и сбора системных показателей
+# Настройка демона сбора метрик (ping, cpu, ram)
 configure_ping_daemon() {
     log_info "Настраиваю демон пинга и сбора системных показателей"
 
-    # Создаём скрипт демона
+    # Создание скрипта демона
     cat <<'EOF' > /usr/local/bin/ping_daemon.sh
 #!/bin/bash
-# Расширенный демон для сбора пинга и системных показателей
+# Демон сбора системных метрик
 
-# Пути к лог-файлам
+# Конфигурация
 PING_LOG="/var/log/ping_history.log"
 SYS_STATS_LOG="/var/log/sys_stats.log"
 HOST="google.com"
-MAX_ENTRIES=86400  # Максимальное количество записей в каждом логе
+MAX_ENTRIES=86400 # Ротация логов (кол-во записей)
 
-# Если лог-файлы не существуют, создаём их
+# Создание лог-файлов при их отсутствии
 [ ! -f "$PING_LOG" ] && touch "$PING_LOG"
 [ ! -f "$SYS_STATS_LOG" ] && touch "$SYS_STATS_LOG"
 
 while true; do
-  # --- Сбор данных пинга ---
-  ping_output=$(ping -c 1 -w 5 "$HOST" 2>&1)
-  ping_time=-1
-  if [[ "$ping_output" =~ time=([0-9]+\.[0-9]+) ]]; then
-    ping_time="${BASH_REMATCH[1]}"
-  fi
-  ts=$(date +%s)
-  echo "$ts $ping_time" >> "$PING_LOG"
-  # Если в логе слишком много строк, удаляем первую (FIFO)
-  if [ $(wc -l < "$PING_LOG") -gt "$MAX_ENTRIES" ]; then
-    sed -i '1d' "$PING_LOG"
-  fi
+    # Сбор данных пинга
+    ping_output=$(ping -c 1 -w 5 "$HOST" 2>&1)
+    ping_time=-1
+    if [[ "$ping_output" =~ time=([0-9]+\.[0-9]+) ]]; then
+        ping_time="${BASH_REMATCH[1]}"
+    fi
+    ts=$(date +%s)
+    echo "$ts $ping_time" >> "$PING_LOG"
+    
+    # Ротация лога
+    if [ $(wc -l < "$PING_LOG") -gt "$MAX_ENTRIES" ]; then
+        sed -i '1d' "$PING_LOG"
+    fi
 
-  # --- Сбор системных показателей ---
-  # CPU: Получаем значение user CPU (например, "15.3 us")
-  cpu_line=$(top -b -n1 | grep "Cpu(s)")
-  cpu_usage=0
-  if [[ "$cpu_line" =~ ([0-9]+\.[0-9]+)[[:space:]]*us ]]; then
-    cpu_usage="${BASH_REMATCH[1]}"
-  fi
+    # Сбор системных метрик
+    # Загрузка CPU
+    cpu_line=$(top -b -n1 | grep "Cpu(s)")
+    cpu_usage=0
+    if [[ "$cpu_line" =~ ([0-9]+\.[0-9]+)[[:space:]]*us ]]; then
+        cpu_usage="${BASH_REMATCH[1]}"
+    fi
 
-  # RAM: Используем free -m (вторая строка с "Mem:")
-  free_output=$(free -m)
-  ram_total=$(echo "$free_output" | awk '/Mem:/ {print $2}')
-  ram_used=$(echo "$free_output" | awk '/Mem:/ {print $3}')
-  ram_usage=0
-  if [ "$ram_total" -gt 0 ]; then
-    ram_usage=$(echo "scale=1; $ram_used*100/$ram_total" | bc)
-  fi
+    # Использование RAM
+    free_output=$(free -m)
+    ram_total=$(echo "$free_output" | awk '/Mem:/ {print $2}')
+    ram_used=$(echo "$free_output" | awk '/Mem:/ {print $3}')
+    ram_usage=0
+    if [ "$ram_total" -gt 0 ]; then
+        ram_usage=$(echo "scale=1; $ram_used*100/$ram_total" | bc)
+    fi
 
-  # Disk: Используем df -h /, получаем процент использования (обычно в 5-м столбце)
-  df_line=$(df -h / | tail -1)
-  disk_perc=$(echo "$df_line" | awk '{print $5}' | sed 's/%//')
+    # Использование диска
+    df_line=$(df -h / | tail -1)
+    disk_perc=$(echo "$df_line" | awk '{print $5}' | sed 's/%//')
 
-  # Записываем системные показатели в лог в формате:
-  # timestamp cpu_usage ram_usage disk_percentage
-  echo "$ts $cpu_usage $ram_usage $disk_perc" >> "$SYS_STATS_LOG"
-  if [ $(wc -l < "$SYS_STATS_LOG") -gt "$MAX_ENTRIES" ]; then
-    sed -i '1d' "$SYS_STATS_LOG"
-  fi
+    echo "$ts $cpu_usage $ram_usage $disk_perc" >> "$SYS_STATS_LOG"
+    # Ротация лога
+    if [ $(wc -l < "$SYS_STATS_LOG") -gt "$MAX_ENTRIES" ]; then
+        sed -i '1d' "$SYS_STATS_LOG"
+    fi
 
-  sleep 2
+    sleep 2
 done
 EOF
 
     chmod +x /usr/local/bin/ping_daemon.sh || error_exit "Не удалось сделать ping_daemon.sh исполняемым"
 
-    # Создаём systemd unit для демона
+    # Создание systemd-сервиса
     cat <<EOF > /etc/systemd/system/ping_daemon.service
 [Unit]
 Description=Ping Daemon (сбор ping каждые 2 секунды)
@@ -670,17 +710,18 @@ Group=root
 WantedBy=multi-user.target
 EOF
 
+    # Перезагрузка systemd и запуск сервиса
     systemctl daemon-reload || error_exit "Не удалось перезагрузить демоны systemd"
     systemctl enable ping_daemon.service || error_exit "Не удалось включить ping_daemon.service"
     systemctl start ping_daemon.service || error_exit "Не удалось запустить ping_daemon.service"
     log_info "Демон пинга и системных показателей настроен и запущен"
 }
 
-# Функция настройки метрик и мониторинга
+# Настройка сервисов метрик и мониторинга
 configure_metrics_services() {
     log_info "Настраиваю сервисы метрик и мониторинга"
 
-    # --- update_metrics.service ---
+    # Сервис update_metrics
     cat <<EOF > /etc/systemd/system/update_metrics.service
 [Unit]
 Description=Update System Metrics Daemon
@@ -704,10 +745,10 @@ EOF
     systemctl enable update_metrics.service || error_exit "Не удалось включить update_metrics.service"
     log_info "update_metrics.service настроен"
 
-    # --- Установка arp-scan ---
+    # Установка arp-scan
     apt-get install -y arp-scan || error_exit "Не удалось установить arp-scan"
 
-    # --- scan_local_network.py ---
+    # Скрипт сканирования локальной сети
     mkdir -p /var/www/html/api
     cat <<'EOF' > /var/www/html/api/scan_local_network.py
 #!/usr/bin/env python3
@@ -718,7 +759,7 @@ import os
 
 def scan_network(interface):
     try:
-        # Запускаем arp-scan для указанного интерфейса
+        # Запуск arp-scan
         result = subprocess.run(['sudo', 'arp-scan', '--interface=' + interface, '--localnet'],
                                   capture_output=True, text=True, timeout=30)
         output = result.stdout
@@ -738,7 +779,7 @@ def scan_network(interface):
     return {"devices": devices}
 
 if __name__ == '__main__':
-    # Используем переменную окружения OUT_IF, если она не задана, по умолчанию "enp0s8"
+    # Получение имени интерфейса из переменной окружения
     interface = os.environ.get("OUT_IF", "enp0s8")
     data = scan_network(interface)
     output_file = "/var/www/html/data/local_network.json"
@@ -747,13 +788,13 @@ if __name__ == '__main__':
 EOF
     chmod +x /var/www/html/api/scan_local_network.py || error_exit "Не удалось сделать scan_local_network.py исполняемым"
 
-    # --- Добавляем cron задачи для update_network_metrics и scan_local_network ---
-    # Добавляем задачу для update_network_metrics.py (если требуется)
+    # Добавление задач в cron
+    # Сбор метрик сети (каждую минуту)
     (crontab -u www-data -l 2>/dev/null; echo "* * * * * /usr/bin/python3 /var/www/html/api/update_network_metrics.py") | crontab -u www-data -
-    # Добавляем задачу для scan_local_network.py с передачей переменной OUT_IF
+    # Сканирование локальной сети (каждые 6 часов)
     (crontab -u www-data -l 2>/dev/null; echo "0 */6 * * * OUT_IF=${OUT_IF} /usr/bin/python3 /var/www/html/api/scan_local_network.py") | crontab -u www-data -
 
-    # --- network_load.service ---
+    # Сервис network_load
     cat <<EOF > /etc/systemd/system/network_load.service
 [Unit]
 Description=Network Load Monitor using psutil
@@ -778,18 +819,18 @@ EOF
     systemctl enable network_load.service || error_exit "Не удалось включить network_load.service"
     log_info "network_load.service настроен"
 
-    # --- Установка необходимых пакетов для метрик ---
+    # Установка пакетов для сбора метрик
     apt-get install -y python3-psutil python3-pip vnstat || error_exit "Не удалось установить пакеты для метрик"
     pip3 install psutil || error_exit "Не удалось установить psutil через pip3"
     log_info "Пакеты для метрик и мониторинга установлены"
 }
 
-# Функция для настройки и запуска Telegram Bot Service.
+# Настройка Telegram-бота
 telegram_bot() {
     echo "Настройка Telegram Bot Service..."
 
-    # Создание файла службы /etc/systemd/system/telegram_bot.service
-    sudo tee /etc/systemd/system/telegram_bot.service > /dev/null << 'EOF'
+    # Создание systemd-сервиса
+    tee /etc/systemd/system/telegram_bot.service > /dev/null << 'EOF'
 [Unit]
 Description=Telegram Bot Service
 After=network.target
@@ -806,61 +847,54 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-    # Создание лог-файла и установка прав
-    sudo touch /var/log/telegram_bot.log
-    sudo chown www-data:www-data /var/log/telegram_bot.log
-    sudo chmod 664 /var/log/telegram_bot.log
+    # Создание и настройка лог-файла
+    touch /var/log/telegram_bot.log
+    chown www-data:www-data /var/log/telegram_bot.log
+    chmod 664 /var/log/telegram_bot.log
 
-    # Обновление конфигурации systemd и активация службы
-    sudo systemctl daemon-reload
-    sudo systemctl enable telegram_bot.service
-    sudo systemctl stop telegram_bot.service
+    # Регистрация и активация сервиса
+    systemctl daemon-reload
+    systemctl enable telegram_bot.service
+    systemctl stop telegram_bot.service
 
-    # Создание виртуального окружения для Telegram Bot
-    sudo python3 -m venv /var/www/html/bot_source/venv
-    sudo chown -R "$USER":"$USER" /var/www/html/bot_source/venv
+    # Создание виртуального окружения Python (venv)
+    python3 -m venv /var/www/html/bot_source/venv
+    chown -R "$USER":"$USER" /var/www/html/bot_source/venv
     source /var/www/html/bot_source/venv/bin/activate
 
-    # Обновление pip и установка необходимых библиотек
+    # Установка Python-библиотек
     pip install --upgrade pip
     pip install python-telegram-bot psutil requests "python-telegram-bot[job-queue]"
 
-    # Добавление прав для пользователя www-data для управления службой
-    echo "www-data ALL=NOPASSWD: /bin/systemctl is-active telegram_bot.service, /bin/systemctl start telegram_bot.service, /bin/systemctl stop telegram_bot.service, /bin/systemctl enable telegram_bot.service, /bin/systemctl disable telegram_bot.service" | sudo tee /etc/sudoers.d/telegram_bot
+    # Настройка прав sudo для управления сервисом
+    echo "www-data ALL=NOPASSWD: /bin/systemctl is-active telegram_bot.service, /bin/systemctl start telegram_bot.service, /bin/systemctl stop telegram_bot.service, /bin/systemctl enable telegram_bot.service, /bin/systemctl disable telegram_bot.service" | tee /etc/sudoers.d/telegram_bot
 
-    # Установка исполняемых прав для bot.py
-    sudo chmod +x /var/www/html/bot_source/bot.py
+    # Установка прав на исполнение для скрипта бота
+    chmod +x /var/www/html/bot_source/bot.py
 
-    # Настройка прав для файла конфигурации telegram_bot_config.json
-    sudo chown www-data:www-data /var/www/html/data/telegram_bot_config.json
-    sudo chmod 664 /var/www/html/data/telegram_bot_config.json
+    # Настройка прав на файл конфигурации
+    chown www-data:www-data /var/www/html/data/telegram_bot_config.json
+    chmod 664 /var/www/html/data/telegram_bot_config.json
 
     echo "Telegram Bot Service успешно настроен и запущен."
 }
 
-# Функция настройки Home Metrics Daemon
+# Настройка демона home_metrics
 configure_home_metrics_daemon() {
     log_info "Настраиваю Home Metrics Daemon"
 
-    # Создаем/перезаписываем unit-файл для home_metrics_daemon.service
+    # Создание systemd-сервиса
     cat <<'EOF' > /etc/systemd/system/home_metrics_daemon.service
 [Unit]
 Description=Home Metrics Daemon (Collect CPU/RAM/Disk history)
 After=network.target
 
 [Service]
-# Запуск вашего скрипта
 ExecStart=/usr/bin/python3 /var/www/html/api/home_metrics_daemon.py
-
-# Перезапускать при сбоях
 Restart=always
 RestartSec=2
-
-# Кто будет исполнять (можно root или www-data, в зависимости от ваших нужд)
 User=www-data
 Group=www-data
-
-# Логи будут попадать в syslog (journalctl -u home_metrics_daemon)
 StandardOutput=syslog
 StandardError=syslog
 SyslogIdentifier=home-metrics-daemon
@@ -868,40 +902,33 @@ SyslogIdentifier=home-metrics-daemon
 [Install]
 WantedBy=multi-user.target
 EOF
-
     log_info "Файл home_metrics_daemon.service создан"
 
-    # Перезагружаем демон systemd и запускаем сервис
-    systemctl daemon-reload || error_exit "Не удалось перезагрузить systemd после создания home_metrics_daemon.service"
-    log_info "systemd daemon перезагружен"
-
-    systemctl start home_metrics_daemon.service || error_exit "Не удалось запустить home_metrics_daemon.service"
+    # Регистрация и запуск сервиса
+    systemctl daemon-reload || error_exit "Не удалось перезагрузить systemd"
     systemctl enable home_metrics_daemon.service || error_exit "Не удалось включить home_metrics_daemon.service"
+    systemctl restart home_metrics_daemon.service || error_exit "Не удалось перезапустить home_metrics_daemon.service"
     log_info "home_metrics_daemon.service запущен и включен"
 
-    # Рекомендуется перезапустить сервис, если это необходимо
-    systemctl restart home_metrics_daemon.service || error_exit "Не удалось перезапустить home_metrics_daemon.service"
-    log_info "home_metrics_daemon.service перезапущен"
-
-    # Если файла нет – создаем пустой
+    # Создание и настройка файла данных
     if [ ! -f /var/www/html/data/home_metrics_daemon.json ]; then
         touch /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось создать файл /var/www/html/data/home_metrics_daemon.json"
     fi
-
-    chmod 644 /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось установить права 644 на /var/www/html/data/home_metrics_daemon.json"
-    chown www-data:www-data /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось изменить владельца файла /var/www/html/data/home_metrics_daemon.json"
+    chown www-data:www-data /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось изменить владельца файла"
+    chmod 644 /var/www/html/data/home_metrics_daemon.json || error_exit "Не удалось установить права на файл"
     log_info "Права для /var/www/html/data/home_metrics_daemon.json установлены"
 }
 
+# Настройка демона для управления MTU
 configure_mtu_daemon() {
     log_info "Настраиваю демон для динамического управления MTU и TCPMSS на tun0"
 
-    # Создаём скрипт демона
+    # Создание скрипта демона
     cat <<'EOF' > /usr/local/bin/vpn_mtu_daemon.sh
 #!/bin/bash
-# Демон для мониторинга интерфейса tun0 и применения настроек MTU и TCPMSS (v1.1)
+# Демон для управления MTU и TCPMSS на tun0
 
-# Целевые значения
+# Конфигурация
 TARGET_INTERFACE="tun0"
 TARGET_MTU="1280"
 # Правило TCPMSS для проверки и добавления
@@ -910,36 +937,32 @@ IPTABLES_RULE=(-A FORWARD -o "$TARGET_INTERFACE" -p tcp --tcp-flags SYN,RST SYN 
 LOG_TAG="vpn-mtu-daemon"
 
 while true; do
-    # Проверяем, существует ли интерфейс
+    # Проверка существования интерфейса
     if ip link show "$TARGET_INTERFACE" &> /dev/null; then
         
-        # --- Проверка и установка MTU (более надежный метод) ---
+        # Проверка и установка MTU
         current_mtu=$(ip link show "$TARGET_INTERFACE" | grep -oP 'mtu \K\d+')
         
         if [[ "$current_mtu" -ne "$TARGET_MTU" ]]; then
-            # Устанавливаем корректный MTU
             ip link set dev "$TARGET_INTERFACE" mtu "$TARGET_MTU"
-            # Логируем через системный журнал
             logger -t "$LOG_TAG" "Интерфейс $TARGET_INTERFACE обнаружен. Установлен MTU: $TARGET_MTU."
         fi
 
-        # --- Проверка и добавление правила iptables ---
+        # Проверка и добавление правила TCPMSS
         if ! iptables -C "${IPTABLES_RULE[@]}" &> /dev/null; then
-            # Правило отсутствует, добавляем его
             iptables "${IPTABLES_RULE[@]}"
             logger -t "$LOG_TAG" "Добавлено правило TCPMSS для $TARGET_INTERFACE."
         fi
     fi
     
-    # Пауза перед следующей проверкой
+    # Пауза
     sleep 15
 done
 EOF
-
     chmod +x /usr/local/bin/vpn_mtu_daemon.sh || error_exit "Не удалось сделать vpn_mtu_daemon.sh исполняемым"
     log_info "Скрипт /usr/local/bin/vpn_mtu_daemon.sh создан"
 
-    # Создаём systemd unit для демона
+    # Создание systemd-сервиса
     cat <<EOF > /etc/systemd/system/vpn_mtu_daemon.service
 [Unit]
 Description=VPN MTU and TCPMSS Fix Daemon
@@ -954,58 +977,183 @@ User=root
 [Install]
 WantedBy=multi-user.target
 EOF
-
     log_info "Файл /etc/systemd/system/vpn_mtu_daemon.service создан"
 
-    # Перезагружаем демоны systemd, включаем и запускаем наш сервис
+    # Регистрация и запуск сервиса
     systemctl daemon-reload || error_exit "Не удалось перезагрузить демоны systemd"
     systemctl enable vpn_mtu_daemon.service || error_exit "Не удалось включить vpn_mtu_daemon.service"
     systemctl start vpn_mtu_daemon.service || error_exit "Не удалось запустить vpn_mtu_daemon.service"
     log_info "Демон vpn_mtu_daemon.service настроен и запущен"
 }
 
-# Функция финальных доработок (права на папки, создание файла заметок)
+# Настройка автомонтирования USB
+configure_usb_automount() {
+    log_info "Проверяю конфигурацию автоматического монтирования USB-накопителей..."
+
+    local CONFIG_VERSION="1.0"
+    local HAS_CHANGES=0
+
+    # 1. Создание/обновление скрипта-обработчика
+    local SCRIPT_PATH="/usr/local/bin/mount-usb.sh"
+    local SCRIPT_CURRENT_VERSION=""
+
+    if [ -f "$SCRIPT_PATH" ]; then
+        # Проверка версии существующего скрипта
+        SCRIPT_CURRENT_VERSION=$(head -n 2 "$SCRIPT_PATH" | grep "^# Version:" | awk -F': ' '{print $2}')
+    fi
+
+    if [ "$SCRIPT_CURRENT_VERSION" == "$CONFIG_VERSION" ]; then
+        log_info "Скрипт монтирования USB ($SCRIPT_PATH) уже имеет актуальную версию ($CONFIG_VERSION)."
+    else
+        log_info "Создаю/обновляю скрипт монтирования USB до версии $CONFIG_VERSION..."
+        cat <<EOF > "$SCRIPT_PATH"
+# Version: ${CONFIG_VERSION}
+#!/bin/bash
+# Скрипт для автоматического монтирования USB и копирования vpn.sh
+
+# Поиск домашней директории основного пользователя
+USER_NAME=\$(awk -F: '(\$3>=1000) && (\$1!="nobody"){print \$1; exit}' /etc/passwd)
+if [ -z "\$USER_NAME" ]; then
+    logger -t usb-mount "Не удалось найти основного пользователя, выход."
+    exit 1
+fi
+USER_HOME=\$(getent passwd "\$USER_NAME" | cut -d: -f6)
+
+ACTION=\$1
+DEVICE=\$2
+DEVICE_PATH="/dev/\${DEVICE}"
+
+MOUNT_POINT="\${USER_HOME}/usb-drive"
+LOG_TAG="usb-mount"
+
+mount_device() {
+    logger -t "\$LOG_TAG" "Подключено устройство \${DEVICE_PATH}."
+
+    # Создание точки монтирования
+    mkdir -p "\$MOUNT_POINT"
+    chown "\$USER_NAME":"\$USER_NAME" "\$MOUNT_POINT"
+
+    # Монтирование устройства
+    systemd-mount --no-block --collect -o "uid=\${USER_NAME},gid=\${USER_NAME},utf8,fmask=0113,dmask=0002" "\$DEVICE_PATH" "\$MOUNT_POINT"
+
+    if mountpoint -q "\$MOUNT_POINT"; then
+        logger -t "\$LOG_TAG" "Устройство \${DEVICE_PATH} смонтировано в \${MOUNT_POINT}."
+
+        VPN_SCRIPT_ON_USB="\${MOUNT_POINT}/vpn.sh"
+        if [ -f "\$VPN_SCRIPT_ON_USB" ]; then
+            DEST_SCRIPT="\${USER_HOME}/vpn.sh"
+            cp "\$VPN_SCRIPT_ON_USB" "\$DEST_SCRIPT"
+            chown "\$USER_NAME":"\$USER_NAME" "\$DEST_SCRIPT"
+            chmod +x "\$DEST_SCRIPT"
+            logger -t "\$LOG_TAG" "Файл vpn.sh скопирован в \${USER_HOME}."
+        fi
+    else
+        logger -t "\$LOG_TAG" "Не удалось смонтировать \${DEVICE_PATH}."
+    fi
+}
+
+unmount_device() {
+    if grep -q "\$MOUNT_POINT" /proc/mounts; then
+        systemd-umount "\$MOUNT_POINT"
+        logger -t "\$LOG_TAG" "Устройство отмонтировано из \${MOUNT_POINT}."
+    fi
+}
+
+case "\$ACTION" in
+    add)
+        mount_device
+        ;;
+    remove)
+        unmount_device
+        ;;
+esac
+
+exit 0
+EOF
+        chmod +x "$SCRIPT_PATH" || error_exit "Не удалось сделать скрипт монтирования исполняемым"
+        HAS_CHANGES=1
+    fi
+
+    # 2. Создание/обновление правила udev
+    local RULE_PATH="/etc/udev/rules.d/99-usb-automount.rules"
+    local RULE_CURRENT_VERSION=""
+
+    if [ -f "$RULE_PATH" ]; then
+        RULE_CURRENT_VERSION=$(head -n 1 "$RULE_PATH" | awk -F': ' '{print $2}')
+    fi
+
+    if [ "$RULE_CURRENT_VERSION" == "$CONFIG_VERSION" ]; then
+        log_info "Правило udev ($RULE_PATH) уже имеет актуальную версию ($CONFIG_VERSION)."
+    else
+        log_info "Создаю/обновляю правило udev до версии $CONFIG_VERSION..."
+        cat <<EOF > "$RULE_PATH"
+# Version: ${CONFIG_VERSION}
+# Правило для автоматического монтирования/отмонтирования USB-накопителей
+
+ACTION=="add", SUBSYSTEM=="block", KERNEL=="sd[b-z][0-9]*", ENV{ID_BUS}=="usb", RUN+="/usr/local/bin/mount-usb.sh add %k"
+ACTION=="remove", SUBSYSTEM=="block", KERNEL=="sd[b-z][0-9]*", ENV{ID_BUS}=="usb", RUN+="/usr/local/bin/mount-usb.sh remove %k"
+EOF
+        HAS_CHANGES=1
+    fi
+
+    # 3. Применение изменений udev
+    if [ "$HAS_CHANGES" -eq 1 ]; then
+        log_info "Применяю новые правила udev..."
+        udevadm control --reload-rules && udevadm trigger || error_exit "Не удалось перезагрузить правила udev"
+        log_info "Правила udev перезагружены и активированы"
+    else
+        log_info "Конфигурация авто-монтирования USB уже в актуальном состоянии."
+    fi
+}
+
+# Завершающие настройки
 finalize_setup() {
     log_info "Выполняю финальные доработки"
+    
     chmod -R 777 /var/www/html || log_error "Не удалось изменить права на /var/www/html"
+
+    # Создание и настройка директорий файлового менеджера
     mkdir -p /home/files/.trash/.tmb/
-    mkdir -p /home/files/.trash/
-    mkdir -p /home/files
+    chown -R www-data:www-data /home/files
+    chmod -R 755 /home/files
+
+    # Установка прав на исполнение для служебных скриптов
     chmod +x /var/www/html/scripts/update.sh
     chmod +x /usr/local/bin/ping_daemon.sh
     chmod +x /var/www/html/api/scan_local_network.py
     chmod +x /var/www/html/api/update_network_load.py
-    chown -R www-data:www-data /home/files
-    chown -R www-data:www-data /home/files/.trash/
-    chown -R www-data:www-data /home/files/.trash/.tmb/
+    
+    # Настройка прав на директорию данных и лог-файл
     chown -R www-data:www-data /var/www/html/data
-    chown www-data:www-data /var/log/vpn-web.log
-    chmod -R 755 /home/files
-    chmod -R 755 /home/files/.trash/
-    chmod -R 755 /home/files/.trash/.tmb/
     chmod -R 755 /var/www/html/data
+    chown www-data:www-data /var/log/vpn-web.log
     chmod 660 /var/log/vpn-web.log
+    
+    # Добавление пользователя www-data в группу adm для доступа к логам
     usermod -a -G adm www-data
+    
     systemctl restart apache2
     log_info "Финальные настройки прав и директорий выполнены"
 }
 
+# Проверка интернет-соединения
 check_internet_connection() {
     log_info "Финальная проверка интернет-соединения..."
+    # Проверка доступности сети (по IP)
     if ! ping -c 2 -W 5 "8.8.8.8" &> /dev/null; then
         error_exit "Нет доступа к сети. Проверьте IP-адрес, шлюз и физическое подключение."
     fi
+    # Проверка работы DNS
     if ! ping -c 2 -W 5 "google.com" &> /dev/null; then
         error_exit "Есть доступ к сети, но не работает DNS. Проверьте настройки DNS."
     fi
     log_info "Интернет-соединение работает корректно."
 }
 
-# Удаление и откат изменений
+# Удаление всех компонентов и настроек
 remove_configuration() {
-
     log_info "Запуск удаления зависимостей и программ"
-    # Определяем список сервисов для остановки и отключения
+    # Остановка и отключение всех служб
     services=(
         "openvpn@client1.service"
         "wg-quick@tun0.service"
@@ -1022,14 +1170,13 @@ remove_configuration() {
     done
     log_info "Остановка служб прошла"
 
-    # Если установлен dnsmasq, дополнительно удаляем его
     if dpkg -l | grep -qw dnsmasq; then
         log_info "Начато удаление dnsmasq"
         apt-get purge -y dnsmasq || log_error "Не удалось удалить dnsmasq"
         log_info "dnsmasq удалён"
     fi
 
-    # Удаляем конфигурационные файлы и директории, связанные с настройкой
+    # Удаление конфигурационных файлов
     rm -rf /etc/openvpn /etc/wireguard /var/www/html
     rm -f /etc/dhcp/dhcpd.conf /etc/default/isc-dhcp-server /var/lib/dhcp/dhcpd.leases
     rm -f /etc/systemd/system/vpn_mtu_daemon.service
@@ -1038,7 +1185,7 @@ remove_configuration() {
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer || log_error "Не удалось удалить остатки конфигураций служб"
     log_info "Удалены остатки конфигураций служб"
 
-    # Удаляем установленные пакеты
+    # Удаление пакетов
     apt-get purge -y \
         htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent \
         openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server \
@@ -1046,7 +1193,7 @@ remove_configuration() {
     apt-get autoremove -y
     log_info "Приложения и программы удалены"
 
-    # Удаляем правило NAT, если оно было добавлено
+    # Очистка правил iptables
     iptables -t nat -D POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE 2>/dev/null
     iptables-save > /etc/iptables/rules.v4
     iptables -F
@@ -1054,69 +1201,27 @@ remove_configuration() {
     iptables -X
     log_info "Удалены правила iptables"
 
-    # Перезагружаем systemd, чтобы изменения в unit-файлах вступили в силу
-    systemctl daemon-reload
-
-    # Удаление настроек Телеграм бота
+    # Удаление компонентов Telegram-бота
     echo "Начало удаления конфигурации Telegram Bot Service..."
-
-    # Остановка и отключение сервиса, если он запущен или включён
     if systemctl is-active --quiet telegram_bot.service; then
-        echo "Останавливаем сервис telegram_bot..."
-        sudo systemctl stop telegram_bot.service
-    else
-        echo "Сервис telegram_bot уже не запущен."
+        systemctl stop telegram_bot.service
     fi
-
     if systemctl is-enabled --quiet telegram_bot.service; then
-        echo "Отключаем сервис telegram_bot..."
-        sudo systemctl disable telegram_bot.service
-    else
-        echo "Сервис telegram_bot уже отключён."
+        systemctl disable telegram_bot.service
     fi
     log_info "Сервис telegram_bot отключен"
 
-    # Удаление файла службы systemd
-    if [ -f /etc/systemd/system/telegram_bot.service ]; then
-        echo "Удаляем файл службы /etc/systemd/system/telegram_bot.service..."
-        sudo rm -f /etc/systemd/system/telegram_bot.service
-    else
-        echo "Файл службы /etc/systemd/system/telegram_bot.service не найден."
-    fi
+    rm -f /etc/systemd/system/telegram_bot.service
+    rm -f /var/log/telegram_bot.log
+    rm -rf /var/www/html/bot_source/venv
+    rm -f /etc/sudoers.d/telegram_bot
 
-    # Обновляем конфигурацию systemd
-    sudo systemctl daemon-reload
-
-    # 4. Удаление лог-файла
-    if [ -f /var/log/telegram_bot.log ]; then
-        echo "Удаляем лог-файл /var/log/telegram_bot.log..."
-        sudo rm -f /var/log/telegram_bot.log
-    else
-        echo "Лог-файл /var/log/telegram_bot.log не найден."
-    fi
-    log_info "Лог-файл telegram_bot удален"
-
-    # Удаление виртуального окружения
-    if [ -d /var/www/html/bot_source/venv ]; then
-        echo "Удаляем виртуальное окружение /var/www/html/bot_source/venv..."
-        sudo rm -rf /var/www/html/bot_source/venv
-    else
-        echo "Виртуальное окружение /var/www/html/bot_source/venv не найдено."
-    fi
-    log_info "Виртуальное окружение отключено"
-
-    # Удаление файла sudoers для управления службой telegram_bot
-    if [ -f /etc/sudoers.d/telegram_bot ]; then
-        echo "Удаляем файл sudoers /etc/sudoers.d/telegram_bot..."
-        sudo rm -f /etc/sudoers.d/telegram_bot
-    else
-        echo "Файл sudoers /etc/sudoers.d/telegram_bot не найден."
-    fi
-    
+    # Перезагрузка конфигурации systemd
+    systemctl daemon-reload
     log_info "Все настройки удалены"
 }
 
-# Функция финальной проверки с анимацией
+# Финальная проверка
 check_execution() {
     echo -e "\n${YELLOW}[Проверка выполнения] Начинается проверка...${NC}"
     for i in $(seq 1 100); do
@@ -1156,7 +1261,7 @@ check_execution() {
     log_info "Проверка выполнения завершена"
 }
 
-# --- Основная часть скрипта ---
+# --- Основной блок выполнения ---
 check_root
 
 
@@ -1170,7 +1275,7 @@ echo -e "${BLUE}      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???! 
 echo -e "${BLUE}       :~!77!~            7P             :??????J^                                                  ${NC}"
 echo ""
 echo -e "${YELLOW}==============================================${NC}"
-echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.2)${NC}"
+echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.3)${NC}"
 echo -e "${YELLOW}==============================================${NC}"
 echo ""
 echo "Выберите действие:"
@@ -1189,6 +1294,7 @@ fi
 
 # Выполнение установки и настройки
 install_packages
+configure_usb_automount
 configure_network_services
 preselect_interfaces
 
