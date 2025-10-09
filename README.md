@@ -1,15 +1,17 @@
-<p align="center">
-  <code>
-            .^~!!!~.                                                             .J:                    
-           ?5777~!?P7 ..    .    ::    . ::           .    .   ::.   . .:.    .:.:@~   :::    . :.      
-          Y5.JY7YG ~&.:B!  7G 7BJ?JG~ ~#J?JG~        :B7  7B.~5?7YY. PP??PY  7G??5@~ ~PJ?JP~ ~#YJ7      
-         ^&.?#  P5 7B. ?#.:&~ J#   YB !&:  G5         7&::#! &5!7?#^ BY  ~@:.@!  :&~ &?   Y# ~@^        
-         ^&:~P??Y5?5^   5GGJ  ?&~.:G5 !&.  PP          YGGY  GP^:^^  #J  ^@: #Y.:?@~ GP:.^GY !@.        
-          JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :?J?!?: .7J??!  :J.        
-           :~!77!~            7P             :??????J^                                                  
-  </code>
+<div align="center">
 
-    <h1 align="center">VPN Setup Script (v2.5.3)</h1>
+```text
+        .^~!!!~.                                                                .J:
+        ?5777~!?P7 ..    .    ::    . ::         .    .   ::.   . .:.    .:.:@~   :::    . :.
+      Y5.JY7YG ~&.:B!  7G 7BJ?JG~ ~#J?JG~        :B7  7B.~5?7YY. PP??PY  7G??5@~ ~PJ?JP~ ~#YJ7
+     ^&.?#  P5 7B. ?#.:&~ J#   YB !&:  G5         7&::#! &5!7?#^ BY  ~@:.@!  :&~ &?   Y# ~@^
+     ^&:~P??Y5?5^   5GGJ  ?&~.:G5 !&.  PP          YGGY  GP^:^^  #J  ^@: #Y.:?@~ GP:.^GY !@.
+      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :?J?!?: .7J??!  :J.
+        :~!77!~           7P           :??????J^
+
+<h1 align="center">VPN Setup Script (v2.5.3)</h1>
+
+</div>
 
 ---
 
