@@ -7,7 +7,6 @@
          ^&:~P??Y5?5^   5GGJ  ?&~.:G5 !&.  PP          YGGY  GP^:^^  #J  ^@: #Y.:?@~ GP:.^GY !@.        
           JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :?J?!?: .7J??!  :J.        
            :~!77!~            7P             :??????J^                                                  
-    <br>
     <h1 align="center">VPN Setup Script (v2.5.3)</h1>
   </code>
 
