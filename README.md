@@ -10,7 +10,6 @@
     <br>
     <h1 align="center">VPN Setup Script (v2.5.3)</h1>
   </code>
-</p>
 
 ---
 
