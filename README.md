@@ -19,9 +19,9 @@
 ---
 
 # Quick start
-    ```bash
-    wget [https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh](https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh) -O vpn.sh && sudo bash vpn.sh
-    ```
+```bash
+ wget [https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh](https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh) -O vpn.sh && sudo bash vpn.sh
+```
 
 ---
 
