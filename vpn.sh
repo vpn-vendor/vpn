@@ -53,10 +53,26 @@ error_exit() {
     exit 1
 }
 
-# Проверка прав root
-check_root() {
+# Проверка системных требований (root права и версия ОС)
+check_system_requirements() {
+    # 1. Проверка прав root
     if [ "$EUID" -ne 0 ]; then
         error_exit "Скрипт должен быть запущен с правами root (через sudo или от root)"
+    fi
+
+    # 2. Проверка версии операционной системы
+    if [ -f /etc/os-release ]; then
+        # Загружаем переменные из файла (ID, VERSION_ID и т.д.) в текущую сессию
+        . /etc/os-release
+        
+        # Проверяем, что ID дистрибутива - "ubuntu" (без учета регистра) и версия - "22.04"
+        if [[ "${ID,,}" == "ubuntu" ]] && [[ "$VERSION_ID" == "22.04" ]]; then
+            log_info "Система опознана: Ubuntu 22.04. Проверка требований пройдена."
+        else
+            error_exit "Неподдерживаемая ОС. Скрипт предназначен только для Ubuntu 22.04. Обнаружено: $PRETTY_NAME"
+        fi
+    else
+        error_exit "Не удалось определить версию ОС. Файл /etc/os-release не найден."
     fi
 }
 
@@ -1262,7 +1278,7 @@ check_execution() {
 }
 
 # --- Основной блок выполнения ---
-check_root
+check_system_requirements
 
 
 echo ""
