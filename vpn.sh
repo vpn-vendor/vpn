@@ -2,15 +2,17 @@
 # ==============================================================================
 #
 #   Скрипт автоматической настройки VPN-сервера
-#   Поддерживаемая ОС: Ubuntu 22.04 LTS (чистая установка)
+#   Поддерживаемая ОС: ТОЛЬКО Ubuntu 22.04 LTS (чистая установка с флешки)
 #
 # ==============================================================================
 #
-#   Версия: 2.5.3
+#   Версия: 2.5.4
 #
+#   [+] Добавлен режим "Интернет-шлюз" для раздачи интернета без VPN [БЕТА-ТЕСТИРОВАНИЕ].
 #   [+] Добавлена поддержка PPPoE-соединения.
 #   [+] Добавлено автомонтирование USB-накопителей.
-#   [+] Автоматическое копирование vpn.sh с USB-накопителя.
+#   [+] Автоматическое копирование скрипта с именем vpn.sh с USB-накопителя в домашнюю папку.
+#   [~] Исправлена проблема с автозапуском PPPoE-соединения после перезагрузки.
 #
 # ==============================================================================
 
@@ -69,10 +71,10 @@ check_system_requirements() {
         if [[ "${ID,,}" == "ubuntu" ]] && [[ "$VERSION_ID" == "22.04" ]]; then
             log_info "Система опознана: Ubuntu 22.04. Проверка требований пройдена."
         else
-            error_exit "Неподдерживаемая ОС. Скрипт предназначен только для Ubuntu 22.04. Обнаружено: $PRETTY_NAME"
+            error_exit "[ОШИБКА!] - Неподдерживаемая ОС. Скрипт предназначен ТОЛЬКО для Ubuntu 22.04. Обнаружено: $PRETTY_NAME"
         fi
     else
-        error_exit "Не удалось определить версию ОС. Файл /etc/os-release не найден."
+        error_exit "Не удалось определить версию ОС. Файл /etc/os-release не найден. Возможно установлена другая ОС, а не Ubuntu 22.04"
     fi
 }
 
@@ -411,32 +413,28 @@ EOF
     fi
     log_info "Учетные данные PPPoE сохранены"
 
-    # Настройка автозапуска
-    systemctl enable ppp@dsl-provider.service >/dev/null 2>&1 || log_info "Автозапуск PPPoE (ppp@dsl-provider.service) уже включен."
-    log_info "Автозапуск PPPoE-соединения настроен"
-
-    log_info "Создаю systemd override для стабильного запуска PPPoE после перезагрузки"
-    
+    log_info "Отключаю автозапуск PPPoE через systemd..."
+    systemctl disable ppp@dsl-provider.service >/dev/null 2>&1 || log_info "Сервис ppp@dsl-provider не был включен."
     local override_dir="/etc/systemd/system/ppp@dsl-provider.service.d"
-    local override_file="${override_dir}/wait-for-network.conf"
+    rm -rf "$override_dir"
+    systemctl daemon-reload
 
-    # Создание директории для override
-    mkdir -p "$override_dir" || error_exit "Не удалось создать директорию $override_dir"
-
-    # Создание override-файла
-    cat <<EOF > "$override_file"
-[Unit]
-# Запуск после полной инициализации физических интерфейсов
-After=systemd-networkd-wait-online.service
-Wants=systemd-networkd-wait-online.service
-EOF
-    if [ $? -ne 0 ]; then
-        error_exit "Не удалось создать override-файл $override_file"
+    # Автозапуска через crontab
+    log_info "Настраиваю автозапуск PPPoE через crontab для максимальной надежности"
+    local cron_task="@reboot root /usr/bin/pon dsl-provider"
+    local cron_file="/etc/crontab"
+    
+    # Проверка, не добавлена ли уже задача в crontab
+    if ! grep -qF "$cron_task" "$cron_file"; then
+        # Добавление задачи
+        echo "$cron_task" >> "$cron_file"
+        if [ $? -ne 0 ]; then
+            error_exit "Не удалось добавить задачу в $cron_file"
+        fi
+        log_info "Задача для автозапуска PPPoE успешно добавлена в $cron_file"
+    else
+        log_info "Задача для автозапуска PPPoE уже существует в $cron_file"
     fi
-
-    # Перезагрузка конфигурации systemd
-    systemctl daemon-reload || error_exit "Не удалось выполнить systemctl daemon-reload"
-    log_info "Зависимость от готовности сети для PPPoE успешно добавлена"
 
     # Запуск соединения
     log_info "Запускаю PPPoE-соединение (pon dsl-provider)..."
@@ -506,30 +504,56 @@ EOF
 
 # Настройка iptables (Kill Switch)
 configure_iptables() {
-    log_info "Настраиваю iptables со строгим режимом KILL SWITCH"
+    log_info "Настраиваю iptables..."
     
     # Включение IP-форвардинга
     sed -i '/^#.*net.ipv4.ip_forward/s/^#//' /etc/sysctl.conf
     sysctl -p || error_exit "Ошибка применения sysctl"
 
-    # Kill Switch
-    iptables -P FORWARD DROP
-    log_info "Политика FORWARD по умолчанию установлена в DROP"
+    # Сбрасываем старые правила
+    iptables -F FORWARD
+    iptables -t nat -F POSTROUTING
 
-    # Разрешение трафика из LAN в VPN (tun0)
-    iptables -A FORWARD -i "$OUT_IF" -o tun0 -j ACCEPT
+    if [ "$ROUTING_MODE" == "VPN" ]; then
+        log_info "Применяю правила для РЕЖИМА VPN-ШЛЮЗА (Kill Switch)"
+        
+        # Kill Switch
+        iptables -P FORWARD DROP
+        log_info "Политика FORWARD по умолчанию установлена в DROP"
 
-    # Разрешение ответного трафика из VPN в LAN
-    iptables -A FORWARD -i tun0 -o "$OUT_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
-    log_info "Правила FORWARD для tun0 (VPN) добавлены"
+        # Разрешение трафика из локальной сети в VPN (tun0)
+        iptables -A FORWARD -i "$OUT_IF" -o tun0 -j ACCEPT
 
-    # Настройка NAT для VPN-трафика
-    iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE
-    log_info "Правило NAT для tun0 добавлено"
+        # Разрешение ответного трафика из VPN в локальную сеть
+        iptables -A FORWARD -i tun0 -o "$OUT_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
+        log_info "Правила FORWARD для tun0 (VPN) добавлены"
+
+        # Настройка NAT (маскарадинга) для VPN-трафика
+        iptables -t nat -A POSTROUTING -o tun0 -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE
+        log_info "Правило NAT для tun0 добавлено"
+
+    elif [ "$ROUTING_MODE" == "DIRECT" ]; then
+        log_info "Применяю правила для РЕЖИМА ИНТЕРНЕТ-ШЛЮЗА"
+        
+        # Запрещаем весь транзитный трафик по умолчанию для безопасности
+        iptables -P FORWARD DROP
+        log_info "Политика FORWARD по умолчанию установлена в DROP"
+
+        # Разрешение трафика из локальной сети в Интернет
+        iptables -A FORWARD -i "$OUT_IF" -o "$WAN_IFACE" -j ACCEPT
+
+        # Разрешение установленных соединений из Интернета в локальную сеть
+        iptables -A FORWARD -i "$WAN_IFACE" -o "$OUT_IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
+        log_info "Правила FORWARD для $WAN_IFACE (Интернет) добавлены"
+
+        # Настройка NAT (маскарадинга) для прямого интернет-трафика
+        iptables -t nat -A POSTROUTING -o "$WAN_IFACE" -s "${LOCAL_IP%.*}.0/24" -j MASQUERADE
+        log_info "Правило NAT для $WAN_IFACE добавлено"
+    fi
 
     # Сохранение правил
     iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
-    log_info "Правила iptables для Kill Switch сохранены"
+    log_info "Правила iptables сохранены"
 }
 
 # Настройка автозапуска OpenVPN
@@ -1201,6 +1225,15 @@ remove_configuration() {
     rm -f /etc/systemd/system/vpn-update.service /etc/systemd/system/vpn-update.timer || log_error "Не удалось удалить остатки конфигураций служб"
     log_info "Удалены остатки конфигураций служб"
 
+    # Удаление автозапуска PPPoE из crontab
+    log_info "Удаление задачи автозапуска PPPoE из crontab"
+    local cron_task="@reboot root /usr/bin/pon dsl-provider"
+    local cron_file="/etc/crontab"
+    if [ -f "$cron_file" ]; then
+        # Использование sed для безопасного удаления строки, содержащей задачу
+        sed -i "\|$cron_task|d" "$cron_file"
+    fi
+
     # Удаление пакетов
     apt-get purge -y \
         htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent \
@@ -1251,18 +1284,23 @@ check_execution() {
     else
         error_exit "ISC-DHCP-SERVER не запущен"
     fi
-    # Проверка работы Apache2
-    if systemctl is-active --quiet apache2; then
-        log_info "Apache2 запущен"
-    else
-        error_exit "Apache2 не запущен"
+
+    # Проверяем службы веб-интерфейса (только в режиме VPN-шлюза)
+    if [ "$ROUTING_MODE" == "VPN" ]; then
+        # Проверка работы Apache2
+        if systemctl is-active --quiet apache2; then
+            log_info "Apache2 запущен"
+        else
+            error_exit "Apache2 не запущен"
+        fi
+        # Проверка работы shellinabox
+        if systemctl is-active --quiet shellinabox; then
+            log_info "Shell In A Box запущен"
+        else
+            error_exit "Shell In A Box не запущен"
+        fi
     fi
-    # Проверка работы shellinabox
-    if systemctl is-active --quiet shellinabox; then
-        log_info "Shell In A Box запущен"
-    else
-        error_exit "Shell In A Box не запущен"
-    fi
+
     # Проверка наличия выбранных интерфейсов
     if ip link show "$IN_IF" >/dev/null 2>&1; then
         log_info "Интерфейс $IN_IF обнаружен"
@@ -1291,21 +1329,38 @@ echo -e "${BLUE}      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???! 
 echo -e "${BLUE}       :~!77!~            7P             :??????J^                                                  ${NC}"
 echo ""
 echo -e "${YELLOW}==============================================${NC}"
-echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.3)${NC}"
+echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.4)${NC}"
 echo -e "${YELLOW}==============================================${NC}"
 echo ""
 echo "Выберите действие:"
-echo "1) Установить и настроить сервер"
-echo "2) Удалить все настройки сервера"
+echo "1) Установить и настроить сервер (VPN-шлюз)"
+echo "2) Настроить для раздачи белого интернета в локальную сеть (без VPN и веб-панели) [БЕТА-ФУНКЦИЯ]"
+echo "3) Удалить все настройки сервера"
 echo ""
-read -r -p "Ваш выбор [1/2]: " action_choice
+read -r -p "Ваш выбор [1/2/3]: " action_choice
+
+# Глобальный флаг для режима работы. По умолчанию используется основной режим.
+ROUTING_MODE="VPN"
 
 if [ "$action_choice" == "2" ]; then
+    echo -e "\n${RED}[ПРЕДУПРЕЖДЕНИЕ]${NC} Вы выбрали ${YELLOW}[БЕТА-ФУНКЦИЮ]]${NC}."
+    echo "В этом режиме НЕ будут установлены VPN, веб-интерфейс и связанные с ними службы."
+    echo "Сервер будет настроен ТОЛЬКО как шлюз для раздачи БЕЛОГО интернета в локальную сеть."
+    echo "Функция находится в разработке и может содержать ошибки/конфликты связанные с пакетами или службами"
+    read -r -p "Вы уверены, что хотите продолжить? [y/n]: " confirmation
+    if [[ "$confirmation" != "y" ]]; then
+        echo "Отмена операции."
+        exit 0
+    fi
+    ROUTING_MODE="DIRECT"
+    action_choice="1"
+
+elif [ "$action_choice" == "3" ]; then
     remove_configuration
     echo -e "${YELLOW}[Завершение скрипта]${NC}"
     exit 0
 elif [ "$action_choice" != "1" ]; then
-    error_exit "Неверный выбор. Выберите 1 или 2"
+    error_exit "Неверный выбор. Выберите 1, 2 или 3"
 fi
 
 # Выполнение установки и настройки
@@ -1319,18 +1374,32 @@ if [ "$net_choice" == "3" ]; then
     configure_pppd_direct
 fi
 
+# Определяем внешний интерфейс для NAT
+WAN_IFACE="$IN_IF"
+if [ "$net_choice" == "3" ]; then
+    # Для PPPoE внешний интерфейс всегда ppp0
+    WAN_IFACE="ppp0"
+fi
+
 configure_dns
 configure_dhcp
 configure_iptables
-configure_mtu_daemon
-configure_vpn
-configure_web_interface
-configure_apache
-configure_shellinabox
-configure_ping_daemon
-configure_metrics_services
-telegram_bot
-configure_home_metrics_daemon
+
+# === Блок для режима VPN-шлюза ===
+if [ "$ROUTING_MODE" == "VPN" ]; then
+    log_info "Выполняется настройка для режима VPN-шлюза..."
+    configure_mtu_daemon
+    configure_vpn
+    configure_web_interface
+    configure_apache
+    configure_shellinabox
+    configure_ping_daemon
+    configure_metrics_services
+    telegram_bot
+    configure_home_metrics_daemon
+fi
+# ==================================
+
 finalize_setup
 check_internet_connection
 
@@ -1339,9 +1408,15 @@ check_execution
 
 echo -e "\n${GREEN}[OK]${NC} Установка завершена успешно!"
 echo ""
+echo "${YELLOW}[!ВНИМАНИЕ!]${NC}"
 echo "После перезагрузки сервера все настройки будут применены."
-echo "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
-echo "Логин и пароль от веб-сайта такой же как и от сервера"
+echo "Перезагружайте оборудование свичи/роутеры и сервер после того как успешно настроили через vpn.sh"
+
+if [ "$ROUTING_MODE" == "VPN" ]; then
+    echo "Веб-интерфейс настроен. Доступен по http://$LOCAL_IP/"
+    echo "Логин и пароль от веб-сайта будет таким же как и от сервера"
+fi
+
 echo "Удачи!"
 
 exit 0
