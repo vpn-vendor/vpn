@@ -561,15 +561,23 @@ wait_for_dns() {
     log_info "Ожидаю полной готовности сети и доступности DNS..."
     local max_wait_time=60 # Максимальное время ожидания в секундах
     local elapsed_time=0
+    local spinner="/-\\|"
+    local i=0
     
-    while ! ping -c 1 -W 5 "github.com" &> /dev/null; do
+    while ! (host github.com &> /dev/null || host google.com &> /dev/null); do
         if [ "$elapsed_time" -ge "$max_wait_time" ]; then
+            echo ""
             error_exit "Не удалось получить доступ к сети с рабочим DNS в течение $max_wait_time секунд."
         fi
-        echo -ne "\rПроверка доступности DNS... (${elapsed_time}с)"
-        sleep 2
-        elapsed_time=$((elapsed_time + 2))
+
+        # Анимация спиннера
+        i=$(( (i+1) %4 ))
+        printf "\r[%c] Проверка доступности DNS... (${elapsed_time}с)" "${spinner:$i:1}"
+        
+        sleep 1
+        elapsed_time=$((elapsed_time + 1))
     done
+
     echo ""
     log_info "Сеть и DNS полностью работоспособны."
 }
