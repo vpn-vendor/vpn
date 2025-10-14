@@ -1384,6 +1384,7 @@ fi
 configure_dns
 configure_dhcp
 configure_iptables
+check_internet_connection
 
 # === Блок для режима VPN-шлюза ===
 if [ "$ROUTING_MODE" == "VPN" ]; then
@@ -1401,7 +1402,6 @@ fi
 # ==================================
 
 finalize_setup
-check_internet_connection
 
 # Финальная проверка с анимацией
 check_execution
