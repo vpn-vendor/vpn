@@ -556,6 +556,24 @@ configure_iptables() {
     log_info "Правила iptables сохранены"
 }
 
+# Ожидание доступности DNS
+wait_for_dns() {
+    log_info "Ожидаю полной готовности сети и доступности DNS..."
+    local max_wait_time=60 # Максимальное время ожидания в секундах
+    local elapsed_time=0
+    
+    while ! ping -c 1 -W 5 "github.com" &> /dev/null; do
+        if [ "$elapsed_time" -ge "$max_wait_time" ]; then
+            error_exit "Не удалось получить доступ к сети с рабочим DNS в течение $max_wait_time секунд."
+        fi
+        echo -ne "\rПроверка доступности DNS... (${elapsed_time}с)"
+        sleep 2
+        elapsed_time=$((elapsed_time + 2))
+    done
+    echo ""
+    log_info "Сеть и DNS полностью работоспособны."
+}
+
 # Настройка автозапуска OpenVPN
 configure_vpn() {
     log_info "Настраиваю VPN (OpenVPN)"
@@ -1384,7 +1402,7 @@ fi
 configure_dns
 configure_dhcp
 configure_iptables
-check_internet_connection
+wait_for_dns
 
 # === Блок для режима VPN-шлюза ===
 if [ "$ROUTING_MODE" == "VPN" ]; then
@@ -1402,6 +1420,7 @@ fi
 # ==================================
 
 finalize_setup
+check_internet_connection
 
 # Финальная проверка с анимацией
 check_execution
