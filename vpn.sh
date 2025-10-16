@@ -8,8 +8,7 @@
 #
 #   Версия: 2.5.4
 #
-#   [+] Добавлен локальный DNS-сервер для локальной сети
-#   [+] Добавлен режим "Интернет-шлюз" для раздачи интернета без VPN [БЕТА].
+#   [+] Добавлен режим "Интернет-шлюз" для раздачи интернета без VPN [БЕТА-ТЕСТИРОВАНИЕ].
 #   [+] Добавлена поддержка PPPoE-соединения.
 #   [+] Добавлено автомонтирование USB-накопителей.
 #   [+] Автоматическое копирование скрипта с именем vpn.sh с USB-накопителя в домашнюю папку.
@@ -109,7 +108,7 @@ install_packages() {
     
     # Установка пакетов
     log_info "Устанавливаю необходимые пакеты в автоматическом режиме..."
-    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y ppp net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server dnsmasq iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y ppp net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
     log_info "Необходимые пакеты установлены"
 
     # Включение модулей Apache
@@ -119,15 +118,19 @@ install_packages() {
     a2enmod authnz_pam || error_exit "Не удалось включить модуль authnz_pam"
     systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после включения модулей"
 
-    # Отключаем systemd-resolved, чтобы избежать конфликтов с dnsmasq
-    log_info "Отключаю systemd-resolved для использования dnsmasq"
-    systemctl stop systemd-resolved 2>/dev/null || log_info "Служба systemd-resolved не была запущена."
-    systemctl disable systemd-resolved 2>/dev/null || log_info "Служба systemd-resolved не была включена."
-
-    # Временный resolv.conf
-    rm -f /etc/resolv.conf
-    echo "nameserver 1.1.1.1" > /etc/resolv.conf 
-    log_info "Управление DNS временно настроено через 1.1.1.1"
+    # Удаление dnsmasq (если установлен)
+    if dpkg -l | grep -qw dnsmasq; then
+        log_info "Удаление dnsmasq"
+        systemctl stop dnsmasq 2>/dev/null
+        systemctl disable dnsmasq 2>/dev/null
+        
+        apt-get purge -y \
+            -o Dpkg::Options::="--force-confdef" \
+            -o Dpkg::Options::="--force-confold" \
+            dnsmasq || error_exit "Не удалось удалить dnsmasq"
+        
+        log_info "dnsmasq удалён"
+    fi
 
     # Удаление openvswitch-switch (если установлен)
     if dpkg -l | grep -q openvswitch-switch; then
@@ -450,6 +453,17 @@ EOF
     log_info "Интерфейс ppp0 успешно поднят."
 }
 
+# Настройка DNS
+configure_dns() {
+    log_info "Настраиваю DNS"
+    # Очистка старых DNS-настроек в resolved.conf
+    sed -i '/^\[Resolve\]/,/^\[/ {/^\(DNS\|Domains\)=/d}' /etc/systemd/resolved.conf
+    
+    # Применение настроек
+    systemctl restart systemd-resolved || error_exit "Не удалось перезапустить systemd-resolved"
+    log_info "DNS настроены через systemd-resolved"
+}
+
 # Настройка DHCP-сервера (isc-dhcp-server)
 configure_dhcp() {
     log_info "Настраиваю DHCP-сервер (isc-dhcp-server)"
@@ -469,7 +483,7 @@ subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
     option routers $LOCAL_IP;
     option subnet-mask 255.255.255.0;
     option domain-name "vpn.vendor";
-    option domain-name-servers $LOCAL_IP;
+    option domain-name-servers 94.140.14.14, 94.140.15.15;
 }
 EOF
 
@@ -486,47 +500,6 @@ EOF
     systemctl restart isc-dhcp-server || error_exit "isc-dhcp-server не был перезапущен"
     systemctl enable isc-dhcp-server || error_exit "isc-dhcp-server не был включён для автозапуска"
     log_info "DHCP-сервер настроен"
-}
-
-# Кэширующий DNS-сервер
-configure_dnsmasq() {
-    log_info "Настраиваю dnsmasq как кэширующий DNS-сервер"
-    
-    local dnsmasq_conf="/etc/dnsmasq.conf"
-    
-    # Создаем резервную копию и генерируем чистый конфиг
-    if [ -f "$dnsmasq_conf" ]; then
-        mv "$dnsmasq_conf" "${dnsmasq_conf}.bak"
-    fi
-    
-    cat <<EOF > "$dnsmasq_conf"
-# ==============================================================================
-# Конфигурация /etc/dnsmasq.conf, сгенерированная скриптом vpn.sh
-# ==============================================================================
-
-domain-needed
-bogus-priv
-cache-size=1000
-
-# Апстрим DNS
-server=94.140.14.14
-server=94.140.15.15
-server=1.1.1.1
-
-# Слушать только локалку и loopback
-interface=$OUT_IF
-listen-address=127.0.0.1,$LOCAL_IP
-bind-interfaces
-
-# Не выступать DHCP-сервером (используется isc-dhcp-server)
-no-dhcp-interface
-EOF
-
-    echo "nameserver 127.0.0.1" > /etc/resolv.conf
-    
-    systemctl restart dnsmasq || error_exit "Не удалось перезапустить dnsmasq"
-    systemctl enable dnsmasq || error_exit "Не удалось включить dnsmasq для автозапуска"
-    log_info "dnsmasq успешно настроен и запущен"
 }
 
 # Настройка iptables (Kill Switch)
@@ -581,6 +554,32 @@ configure_iptables() {
     # Сохранение правил
     iptables-save > /etc/iptables/rules.v4 || error_exit "Не удалось сохранить правила iptables"
     log_info "Правила iptables сохранены"
+}
+
+# Ожидание доступности DNS
+wait_for_dns() {
+    log_info "Ожидаю полной готовности сети и доступности DNS..."
+    local max_wait_time=60 # Максимальное время ожидания в секундах
+    local elapsed_time=0
+    local spinner="/-\\|"
+    local i=0
+    
+    while ! (host github.com &> /dev/null || host google.com &> /dev/null); do
+        if [ "$elapsed_time" -ge "$max_wait_time" ]; then
+            echo ""
+            error_exit "Не удалось получить доступ к сети с рабочим DNS в течение $max_wait_time секунд."
+        fi
+
+        # Анимация спиннера
+        i=$(( (i+1) %4 ))
+        printf "\r[%c] Проверка доступности DNS... (${elapsed_time}с)" "${spinner:$i:1}"
+        
+        sleep 1
+        elapsed_time=$((elapsed_time + 1))
+    done
+
+    echo ""
+    log_info "Сеть и DNS полностью работоспособны."
 }
 
 # Настройка автозапуска OpenVPN
@@ -1208,7 +1207,7 @@ check_internet_connection() {
     log_info "Финальная проверка интернет-соединения..."
     # Проверка доступности сети (по IP)
     if ! ping -c 2 -W 5 "8.8.8.8" &> /dev/null; then
-        error_exit "Нет доступа к сети. Проверьте IP-адрес, шлюз/свитч и физическое подключение."
+        error_exit "Нет доступа к сети. Проверьте IP-адрес, шлюз и физическое подключение."
     fi
     # Проверка работы DNS
     if ! ping -c 2 -W 5 "google.com" &> /dev/null; then
@@ -1264,7 +1263,7 @@ remove_configuration() {
     # Удаление пакетов
     apt-get purge -y \
         htop net-tools mtr network-manager wireguard openvpn apache2 php git iptables-persistent \
-        openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server dnsmasq \
+        openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server \
         libapache2-mod-authnz-pam shellinabox dos2unix || log_error "Не удалось удалить пакеты OpenVPN, WireGuard, isc-dhcp-server или shellinabox"
     apt-get autoremove -y
     log_info "Приложения и программы удалены"
@@ -1276,16 +1275,6 @@ remove_configuration() {
     iptables -t nat -F
     iptables -X
     log_info "Удалены правила iptables"
-
-    # Восстановление системной службы DNS (systemd-resolved)
-    log_info "Восстанавливаю службу systemd-resolved..."
-    systemctl unmask systemd-resolved.service 2>/dev/null
-    systemctl enable systemd-resolved.service || log_error "Не удалось включить systemd-resolved"
-    systemctl start systemd-resolved.service || log_error "Не удалось запустить systemd-resolved"
-
-    # Восстанавливаем стандартную символическую ссылку для resolv.conf
-    ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
-    log_info "Стандартные настройки DNS восстановлены."
 
     # Удаление компонентов Telegram-бота
     echo "Начало удаления конфигурации Telegram Bot Service..."
@@ -1418,9 +1407,10 @@ if [ "$net_choice" == "3" ]; then
     WAN_IFACE="ppp0"
 fi
 
+configure_dns
 configure_dhcp
-configure_dnsmasq
 configure_iptables
+wait_for_dns
 
 # === Блок для режима VPN-шлюза ===
 if [ "$ROUTING_MODE" == "VPN" ]; then
