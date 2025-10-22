@@ -1308,7 +1308,7 @@ check_execution() {
     if systemctl is-active --quiet isc-dhcp-server; then
         log_info "ISC-DHCP-SERVER запущен"
     else
-        error_exit "ISC-DHCP-SERVER не запущен"
+        error_exit "ISC-DHCP-SERVER не запущен, возможно не подключена локальная сеть (свич и пк)"
     fi
 
     # Проверяем службы веб-интерфейса (только в режиме VPN-шлюза)
