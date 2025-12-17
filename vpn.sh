@@ -14,6 +14,8 @@
 #   [~] Фикс check_system_requirements:
 #         - Ожидание блокировок APT.
 #         - Безопасная проверка зависимостей.
+#   [~] Фикс configure_network_services:
+#         - Исправлена логическая ошибка удаления файлов .yml до явного согласия на их удаление.
 #
 # ==============================================================================
 
@@ -116,19 +118,45 @@ check_system_requirements() {
 
 # Переключение на systemd-networkd
 configure_network_services() {
-    log_info "Переключаю сетевое управление на systemd-networkd"
-    # Отключение NetworkManager
-    systemctl stop NetworkManager.service 2>/dev/null || log_info "NetworkManager не установлен"
-    systemctl disable NetworkManager.service 2>/dev/null || log_info "NetworkManager не установлен/отключение службы"
+    log_info "Инициализация перехода на systemd-networkd..."
 
-    # Включение systemd-networkd
-    systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
-    systemctl start systemd-networkd.service || error_exit "Не удалось запустить systemd-networkd"
+    # 1. Мягкая остановка и полная блокировка NetworkManager
+    if systemctl is-active --quiet NetworkManager; then
+        log_info "Останавливаю NetworkManager..."
+        systemctl stop NetworkManager.service 2>/dev/null
+    fi
+    
+    if systemctl is-enabled --quiet NetworkManager; then
+        systemctl disable NetworkManager.service 2>/dev/null
+        systemctl mask NetworkManager.service 2>/dev/null || log_info "Не удалось замаскировать NetworkManager (не критичная ошибка)"
+        log_info "NetworkManager отключен и замаскирован."
+    else
+        log_info "NetworkManager уже отключен или отсутствует."
+    fi
 
-    # Очистка старых конфигураций netplan
-    rm -f /etc/netplan/*.yml
+    # 2. Включение systemd-networkd
+    if ! systemctl is-active --quiet systemd-networkd; then
+        systemctl enable systemd-networkd.service || error_exit "Не удалось включить systemd-networkd"
+        systemctl start systemd-networkd.service || error_exit "Не удалось запустить systemd-networkd"
+        log_info "Служба systemd-networkd запущена."
+    else
+        log_info "systemd-networkd уже работает."
+    fi
 
-    log_info "Сетевые службы переключены на systemd-networkd"
+    # 3. Включение systemd-resolved
+    if ! systemctl is-active --quiet systemd-resolved; then
+        systemctl enable systemd-resolved.service
+        systemctl start systemd-resolved.service
+        log_info "Служба systemd-resolved (DNS) запущена."
+    fi
+
+    # 4. Исправление симлинка resolv.conf
+    if [ -L /etc/resolv.conf ] && [ "$(readlink /etc/resolv.conf)" != "/run/systemd/resolve/stub-resolv.conf" ]; then
+        log_info "Корректировка симлинка /etc/resolv.conf..."
+        ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    fi
+
+    log_info "Службы сетевого управления подготовлены."
 }
 
 # Установщик пакетов
