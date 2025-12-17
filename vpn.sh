@@ -8,9 +8,12 @@
 #
 #   Версия: 2.5.4
 #
-#   [~] Полностью переписана логика проверки правил iptables (configure_mtu_daemon).
+#   [~] Полностью переписана логика проверки правил iptables (configure_mtu_daemon):
 #         - Устранена проблема "iptables -C -A", вызывавшая дублирование.
 #         - Добавлен механизм самоисцеления.
+#   [~] Фикс check_system_requirements:
+#         - Ожидание блокировок APT.
+#         - Безопасная проверка зависимостей.
 #
 # ==============================================================================
 
@@ -55,25 +58,60 @@ error_exit() {
 
 # Проверка системных требований (root права и версия ОС)
 check_system_requirements() {
+    log_info "Запуск предварительной проверки системы..."
+
     # 1. Проверка прав root
     if [ "$EUID" -ne 0 ]; then
-        error_exit "Скрипт должен быть запущен с правами root (через sudo или от root)"
+        error_exit "Скрипт НУЖНО запустить с правами root (через sudo или от root)!!!"
     fi
 
-    # 2. Проверка версии операционной системы
+    # 2. Изолированная проверка ОС
     if [ -f /etc/os-release ]; then
-        # Загружаем переменные из файла (ID, VERSION_ID и т.д.) в текущую сессию
-        . /etc/os-release
-        
-        # Проверяем, что ID дистрибутива - "ubuntu" (без учета регистра) и версия - "22.04"
-        if [[ "${ID,,}" == "ubuntu" ]] && [[ "$VERSION_ID" == "22.04" ]]; then
-            log_info "Система опознана: Ubuntu 22.04. Проверка требований пройдена."
+        local os_name=$(grep -E "^ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+        local os_version=$(grep -E "^VERSION_ID=" /etc/os-release | cut -d= -f2 | tr -d '"')
+
+        if [[ "${os_name,,}" == "ubuntu" ]] && [[ "$os_version" == "22.04"* ]]; then
+            log_info "Система подтверждена: Ubuntu $os_version."
         else
-            error_exit "[ОШИБКА!] - Неподдерживаемая ОС. Скрипт предназначен ТОЛЬКО для Ubuntu 22.04. Обнаружено: $PRETTY_NAME"
+            error_exit "Неподдерживаемая ОС ($os_name $os_version). Требуется Ubuntu 22.04."
         fi
     else
-        error_exit "Не удалось определить версию ОС. Файл /etc/os-release не найден. Возможно установлена другая ОС, а не Ubuntu 22.04"
+        error_exit "Файл /etc/os-release не найден. Невозможно определить ОС."
     fi
+
+    # 3. Dependency Check
+    local required_tools=("curl" "grep" "awk" "sed" "ip" "systemctl")
+    local missing_tools=()
+
+    for tool in "${required_tools[@]}"; do
+        if ! command -v "$tool" &> /dev/null; then
+            missing_tools+=("$tool")
+        fi
+    done
+
+    if [ ${#missing_tools[@]} -ne 0 ]; then
+        log_error "Отсутствуют необходимые системные утилиты: ${missing_tools[*]}"
+        log_info "Пытаюсь установить базовые утилиты..."
+        apt-get update -qq && apt-get install -y -qq "${missing_tools[@]}" || error_exit "Не удалось установить базовые зависимости."
+    fi
+
+    # 4. Anti-Lock Mechanism
+    if fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+        log_info "Обнаружена блокировка APT (фоновые обновления). Ожидание освобождения..."
+        local wait_counter=0
+        while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+            sleep 5
+            wait_counter=$((wait_counter+5))
+            if [ "$wait_counter" -ge 300 ]; then
+                error_exit "APT заблокирован слишком долго (>5 минут). Попробуйте перезагрузить сервер."
+            fi
+            printf "\rОжидание завершения системных процессов... %ds" "$wait_counter"
+        done
+        echo "" # Перенос строки после счетчика
+        log_info "Блокировка APT снята. Продолжаем."
+    fi
+
+    log_info "Предварительная проверка системы пройдена успешно."
 }
 
 # Переключение на systemd-networkd
