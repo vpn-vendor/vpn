@@ -8,11 +8,9 @@
 #
 #   Версия: 2.5.4
 #
-#   [+] Добавлен режим "Интернет-шлюз" для раздачи интернета без VPN [БЕТА-ТЕСТИРОВАНИЕ].
-#   [+] Добавлена поддержка PPPoE-соединения.
-#   [+] Добавлено автомонтирование USB-накопителей.
-#   [+] Автоматическое копирование скрипта с именем vpn.sh с USB-накопителя в домашнюю папку.
-#   [~] Исправлена проблема с автозапуском PPPoE-соединения после перезагрузки.
+#   [~] Полностью переписана логика проверки правил iptables (configure_mtu_daemon).
+#         - Устранена проблема "iptables -C -A", вызывавшая дублирование.
+#         - Добавлен механизм самоисцеления.
 #
 # ==============================================================================
 
@@ -992,21 +990,31 @@ configure_mtu_daemon() {
     # Создание скрипта демона
     cat <<'EOF' > /usr/local/bin/vpn_mtu_daemon.sh
 #!/bin/bash
-# Демон для управления MTU и TCPMSS на tun0
 
 # Конфигурация
 TARGET_INTERFACE="tun0"
 TARGET_MTU="1280"
-# Правило TCPMSS для проверки и добавления
-IPTABLES_RULE=(-A FORWARD -o "$TARGET_INTERFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu)
-# Тег для системного лога
 LOG_TAG="vpn-mtu-daemon"
+
+IPTABLES_CHAIN="FORWARD"
+IPTABLES_SPECS=(-o "$TARGET_INTERFACE" -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu)
+
+# === Самоисцеление ===
+CLEANUP_COUNT=0
+while iptables -D "$IPTABLES_CHAIN" "${IPTABLES_SPECS[@]}" 2>/dev/null; do
+    CLEANUP_COUNT=$((CLEANUP_COUNT+1))
+done
+
+if [ "$CLEANUP_COUNT" -gt 0 ]; then
+    logger -t "$LOG_TAG" "Очищено $CLEANUP_COUNT дублирующихся правил TCPMSS при старте."
+fi
+# ====================================================
 
 while true; do
     # Проверка существования интерфейса
     if ip link show "$TARGET_INTERFACE" &> /dev/null; then
         
-        # Проверка и установка MTU
+        # 1. Проверка и установка MTU
         current_mtu=$(ip link show "$TARGET_INTERFACE" | grep -oP 'mtu \K\d+')
         
         if [[ "$current_mtu" -ne "$TARGET_MTU" ]]; then
@@ -1014,9 +1022,9 @@ while true; do
             logger -t "$LOG_TAG" "Интерфейс $TARGET_INTERFACE обнаружен. Установлен MTU: $TARGET_MTU."
         fi
 
-        # Проверка и добавление правила TCPMSS
-        if ! iptables -C "${IPTABLES_RULE[@]}" &> /dev/null; then
-            iptables "${IPTABLES_RULE[@]}"
+        # 2. Проверка и добавление правила TCPMSS
+        if ! iptables -C "$IPTABLES_CHAIN" "${IPTABLES_SPECS[@]}" 2>/dev/null; then
+            iptables -A "$IPTABLES_CHAIN" "${IPTABLES_SPECS[@]}"
             logger -t "$LOG_TAG" "Добавлено правило TCPMSS для $TARGET_INTERFACE."
         fi
     fi
@@ -1026,7 +1034,7 @@ while true; do
 done
 EOF
     chmod +x /usr/local/bin/vpn_mtu_daemon.sh || error_exit "Не удалось сделать vpn_mtu_daemon.sh исполняемым"
-    log_info "Скрипт /usr/local/bin/vpn_mtu_daemon.sh создан"
+    log_info "Скрипт /usr/local/bin/vpn_mtu_daemon.sh создан (v2.0 fixed)"
 
     # Создание systemd-сервиса
     cat <<EOF > /etc/systemd/system/vpn_mtu_daemon.service
@@ -1048,7 +1056,7 @@ EOF
     # Регистрация и запуск сервиса
     systemctl daemon-reload || error_exit "Не удалось перезагрузить демоны systemd"
     systemctl enable vpn_mtu_daemon.service || error_exit "Не удалось включить vpn_mtu_daemon.service"
-    systemctl start vpn_mtu_daemon.service || error_exit "Не удалось запустить vpn_mtu_daemon.service"
+    systemctl restart vpn_mtu_daemon.service || error_exit "Не удалось перезапустить vpn_mtu_daemon.service"
     log_info "Демон vpn_mtu_daemon.service настроен и запущен"
 }
 
