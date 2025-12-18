@@ -8,14 +8,10 @@
 #
 #   Версия: 2.5.4
 #
-#   [~] Полностью переписана логика проверки правил iptables (configure_mtu_daemon):
-#         - Устранена проблема "iptables -C -A", вызывавшая дублирование.
-#         - Добавлен механизм самоисцеления.
-#   [~] Фикс check_system_requirements:
-#         - Ожидание блокировок APT.
-#         - Безопасная проверка зависимостей.
-#   [~] Фикс configure_network_services:
-#         - Исправлена логическая ошибка удаления файлов .yml до явного согласия на их удаление.
+#   [~] Улучшен метод install_packages:
+#         - Добавлена блокировка диалоговых окон во время установки.  
+#         - Исправлен порядок очистки конфликтных ПО.
+#         - Убран шум из логов во время установки.
 #
 # ==============================================================================
 
@@ -161,54 +157,66 @@ configure_network_services() {
 
 # Установщик пакетов
 install_packages() {
-    log_info "Инициализация запуска обновлений + установки программ"
-    # Обновление списка пакетов
-    apt-get update || error_exit "Обновление репозиториев не выполнено"
-    
-    # Обновление системы
-    log_info "Запускаю полное обновление системы в автоматическом режиме..."
-    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade -y || error_exit "Обновление системы не выполнено"
-    log_info "Обновление системы прошло"
-    
-    # Установка пакетов
-    log_info "Устанавливаю необходимые пакеты в автоматическом режиме..."
-    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y ppp net-tools mtr wireguard openvpn apache2 php git iptables-persistent openssh-server resolvconf speedtest-cli nload libapache2-mod-php isc-dhcp-server iperf3 libapache2-mod-authnz-pam shellinabox dos2unix python3-venv python3.10-venv || error_exit "Установка необходимых пакетов не выполнена"
-    log_info "Необходимые пакеты установлены"
+    log_info "Инициализация системы пакетов..."
 
-    # Включение модулей Apache
-    a2enmod proxy || error_exit "Не удалось включить модуль proxy"
-    a2enmod proxy_http || error_exit "Не удалось включить модуль proxy_http"
-    a2enmod rewrite || error_exit "Не удалось включить модуль rewrite"
-    a2enmod authnz_pam || error_exit "Не удалось включить модуль authnz_pam"
-    systemctl restart apache2 || error_exit "Не удалось перезапустить Apache после включения модулей"
+    # 1. Очистка конфликтующего ПО
+    local conflict_packages=("dnsmasq" "openvswitch-switch" "netplan.io") 
+    
+    for pkg in "dnsmasq" "openvswitch-switch"; do
+        if dpkg -l | grep -qw "$pkg"; then
+            log_info "Обнаружен конфликтующий пакет: $pkg. Удаляю..."
+            systemctl stop "$pkg" 2>/dev/null
+            systemctl disable "$pkg" 2>/dev/null
+            apt-get purge -y -qq "$pkg" || log_error "Ошибка при удалении $pkg (возможно уже удален)"
+        fi
+    done
 
-    # Удаление dnsmasq (если установлен)
-    if dpkg -l | grep -qw dnsmasq; then
-        log_info "Удаление dnsmasq"
-        systemctl stop dnsmasq 2>/dev/null
-        systemctl disable dnsmasq 2>/dev/null
-        
-        apt-get purge -y \
-            -o Dpkg::Options::="--force-confdef" \
-            -o Dpkg::Options::="--force-confold" \
-            dnsmasq || error_exit "Не удалось удалить dnsmasq"
-        
-        log_info "dnsmasq удалён"
+    # 2. Обновление списка пакетов
+    log_info "Обновление репозиториев..."
+    local update_success=0
+    for i in {1..3}; do
+        if apt-get update -qq; then
+            update_success=1
+            break
+        fi
+        log_info "Попытка обновления $i не удалась. Жду 5 секунд..."
+        sleep 5
+    done
+
+    if [ $update_success -eq 0 ]; then
+        error_exit "Критическая ошибка: Не удалось обновить список пакетов (проверьте интернет/DNS)."
     fi
 
-    # Удаление openvswitch-switch (если установлен)
-    if dpkg -l | grep -q openvswitch-switch; then
-        log_info "Удаление openvswitch-switch"
-        systemctl stop openvswitch-switch
-        systemctl disable openvswitch-switch
-        
-        apt-get purge -y \
-            -o Dpkg::Options::="--force-confdef" \
-            -o Dpkg::Options::="--force-confold" \
-            openvswitch-switch || error_exit "Не удалось удалить openvswitch-switch"
-        
-        log_info "openvswitch-switch удалён"
+    # 3. Автоматизация ответов
+    echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
+    echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
+
+    # 4. Обновление системы (Silent Upgrade)
+    log_info "Запуск полного обновления системы (может занять время)..."
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" upgrade -y -qq || error_exit "Ошибка обновления системы"
+
+    # 5. Установка пакетов
+    log_info "Установка необходимых пакетов..."
+    local packages=(
+        "ppp" "net-tools" "mtr" "wireguard" "openvpn" "apache2" "php" "git"
+        "iptables-persistent" "openssh-server" "resolvconf" "speedtest-cli"
+        "nload" "libapache2-mod-php" "isc-dhcp-server" "iperf3"
+        "libapache2-mod-authnz-pam" "shellinabox" "dos2unix"
+        "python3-venv" "python3.10-venv" "debconf-utils"
+    )
+
+    apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" install -y -qq "${packages[@]}" || error_exit "Ошибка установки пакетов."
+    log_info "Пакеты успешно установлены."
+
+    # 6. Настройка модулей Apache
+    if command -v a2enmod &> /dev/null; then
+        a2enmod proxy proxy_http rewrite authnz_pam headers > /dev/null 2>&1
+        systemctl restart apache2 || log_error "Apache перезапустится позже (сейчас не критично)"
+    else
+        error_exit "Apache не установлен корректно (нет a2enmod)."
     fi
+
+    log_info "Установка и первичная настройка ПО завершена."
 }
 
 # Меню выбора режима настройки Netplan
