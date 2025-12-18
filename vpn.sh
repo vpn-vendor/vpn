@@ -12,6 +12,8 @@
 #         - Добавлена блокировка диалоговых окон во время установки.  
 #         - Исправлен порядок очистки конфликтных ПО.
 #         - Убран шум из логов во время установки.
+#   [~] Улучшен метод preselect_interfaces:
+#         - Исправлена проблема парсинга и не верной валидации данных.
 #
 # ==============================================================================
 
@@ -221,48 +223,80 @@ install_packages() {
 
 # Меню выбора режима настройки Netplan
 preselect_interfaces() {
-    echo "Какое действие выполнить с NETPLAN?"
-    echo "1. Полная настройка."
-    echo "2. Настроить только NETPLAN и пропустить основную настройку."
-    echo "3. Пропустить настройку NETPLAN и выполнить ТОЛЬКО основную настройку."
-    read -r -p "Ваш выбор [1/2/3]: " netplan_choice
+    log_info "Выбор режима настройки сети..."
+    
+    echo "------------------------------------------------"
+    echo "Какое действие выполнить с настройками сети (NETPLAN)?"
+    echo "1. [ПО УМОЛЧАНИЮ] Полная настройка с нуля (выбор интерфейсов, IP)."
+    echo "2. Настроить ТОЛЬКО Netplan и выйти (без установки VPN)."
+    echo "3. Пропустить настройку Netplan (использовать текущую конфигурацию)."
+    echo "------------------------------------------------"
+
+    # 1. Цикл валидации
+    while true; do
+        read -r -p "Ваш выбор [1/2/3]: " netplan_choice
+        case "$netplan_choice" in
+            1|2|3) break ;; # Корректный ввод, выход из цикла
+            *) echo -e "${YELLOW}Пожалуйста, введите 1, 2 или 3.${NC}" ;;
+        esac
+    done
 
     case "$netplan_choice" in
         1)
-            # 1) Полная настройка
+            # Полная настройка
             select_interfaces
             configure_netplan
             ;;
         2)
-            # 2) Только настройка Netplan
+            # Только настройка Netplan (Режим утилиты)
             configure_network_services
             select_interfaces
             configure_netplan
-            echo -e "\n${GREEN}[OK]${NC} Настройка netplan выполнена. Дальнейшая настройка пропущена."
+            echo -e "\n${GREEN}[OK]${NC} Настройка netplan выполнена. Перезагрузите сервер для применения."
             exit 0
             ;;
         3)
-            # 3) Пропуск настройки (использование существующей)
-            netplan_file=$(find /etc/netplan -maxdepth 1 -type f -name "*.yaml" | head -n 1)
+            # Пропуск настройки (Advanced Mode)
+            log_info "Анализ текущей конфигурации сети..."
+            
+            # Попытка найти активный файл
+            netplan_file=$(find /etc/netplan -maxdepth 1 -type f -name "*.yaml" ! -name "00-installer-config.yaml" | head -n 1)
+            [ -z "$netplan_file" ] && netplan_file=$(find /etc/netplan -maxdepth 1 -type f -name "*.yaml" | head -n 1)
+
             if [ -z "$netplan_file" ]; then
-                error_exit "Не найден netplan файл с расширением .yaml. Пожалуйста, настройте сетевые интерфейсы вручную."
+                error_exit "Не найдены файлы конфигурации Netplan (.yaml). Выберите вариант 1."
             fi
-            if ! grep -q "renderer: networkd" "$netplan_file"; then
-                error_exit "Netplan файл ($netplan_file) не настроен для использования networkd."
+            
+            log_info "Используется файл конфигурации: $netplan_file"
+
+            # 2. Парсинг
+            # Извлекаем имена интерфейсов (убираем пробелы и двоеточия)
+            local found_ifaces=$(grep -E "^[[:space:]]{2,4}[a-zA-Z0-9_-]+:$" "$netplan_file" | tr -d ': ')
+            
+            # Превращаем в массив
+            readarray -t iface_array <<< "$found_ifaces"
+            
+            if [ ${#iface_array[@]} -lt 2 ]; then
+                 error_exit "В файле $netplan_file найдено менее 2 интерфейсов. Скрипту нужен 1 WAN и 1 LAN. Настройте вручную (Вариант 1)."
             fi
-            IN_IF=$(grep -E "^[[:space:]]+[a-zA-Z0-9_-]+:" "$netplan_file" | head -n 1 | awk '{print $1}' | tr -d ':')
-            OUT_IF=$(grep -E "^[[:space:]]+[a-zA-Z0-9_-]+:" "$netplan_file" | sed -n '2p' | awk '{print $1}' | tr -d ':')
-            LOCAL_IP=$(grep -A 5 -E "^[[:space:]]+$OUT_IF:" "$netplan_file" | grep "addresses:" | grep -oP '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)
+            
+            IN_IF="${iface_array[0]}"
+            OUT_IF="${iface_array[1]}"
+            
+            # Попытка извлечь IP для LAN
+            LOCAL_IP=$(grep -A 5 "$OUT_IF" "$netplan_file" | grep -oP 'addresses: \[\K[0-9.]+' || echo "")
+            
+            # 3. Валидация полученных данных
             if [ -z "$IN_IF" ] || [ -z "$OUT_IF" ]; then
-                error_exit "Не удалось определить сетевые интерфейсы из netplan файла."
+                 error_exit "Не удалось определить интерфейсы автоматически. Используйте Вариант 1."
             fi
+            
             if [ -z "$LOCAL_IP" ]; then
+                log_info "Не удалось определить локальный IP из файла. Использую значение по умолчанию."
                 LOCAL_IP="192.168.69.1"
             fi
-            log_info "Используются текущие настройки интерфейсов: ВХОДЯЩИЙ: $IN_IF, ВЫХОДЯЩИЙ: $OUT_IF, LOCAL_IP: $LOCAL_IP"
-            ;;
-        *)
-            error_exit "Неверный выбор, пожалуйста выберите 1, 2 или 3."
+
+            log_info "Определена конфигурация: WAN=$IN_IF, LAN=$OUT_IF, IP=$LOCAL_IP"
             ;;
     esac
 }
