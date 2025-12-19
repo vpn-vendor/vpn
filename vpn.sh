@@ -11,6 +11,9 @@
 #   [~] Улучшен метод select_interfaces:
 #         - Существенное улучшение надежности валидации.
 #         - Защита от "дурака" с выбором двух раз одного и того же интерфейса.
+#   [~] Существенное улучшение безопасности метода configure_netplan:
+#         - Добавлены продуманные валидаторы в разные части метода.
+#         - Внедрено безопасное применение netplan + откаты.
 #
 # ==============================================================================
 
@@ -397,140 +400,225 @@ select_interfaces() {
     log_info "Настройки сети приняты: WAN=$IN_IF, LAN=$OUT_IF, GW=$LOCAL_IP"
 }
 
-# Настройка netplan
+# Валидатор IP
+validate_ip_format() {
+    local ip=$1
+    local stat=1
+    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        OIFS=$IFS
+        IFS='.'
+        ip_arr=($ip)
+        IFS=$OIFS
+        [[ ${ip_arr[0]} -le 255 && ${ip_arr[1]} -le 255 && ${ip_arr[2]} -le 255 && ${ip_arr[3]} -le 255 ]]
+        stat=$?
+    fi
+    return $stat
+}
+
+# Конвертатор
+mask_to_cidr() {
+    local mask=$1
+    if [[ "$mask" =~ ^/?([0-9]{1,2})$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    # Маски
+    case $mask in
+        "255.255.255.255") echo "32" ;;
+        "255.255.255.252") echo "30" ;;
+        "255.255.255.248") echo "29" ;;
+        "255.255.255.240") echo "28" ;;
+        "255.255.255.224") echo "27" ;;
+        "255.255.255.192") echo "26" ;;
+        "255.255.255.128") echo "25" ;;
+        "255.255.255.0")   echo "24" ;;
+        "255.255.254.0")   echo "23" ;;
+        "255.255.252.0")   echo "22" ;;
+        "255.255.248.0")   echo "21" ;;
+        "255.255.240.0")   echo "20" ;;
+        "255.255.192.0")   echo "18" ;;
+        "255.255.128.0")   echo "17" ;;
+        "255.255.0.0")     echo "16" ;;
+        "255.0.0.0")       echo "8"  ;;
+        *) echo "error" ;;
+    esac
+}
+
+# Настройки netplan
 configure_netplan() {
-    # Отключение cloud-init
-    log_info "Проверка статуса управления сетью cloud-init..."
+    log_info "Настройка конфигурации сети (Netplan)..."
+
+    # 1. Отключение cloud-init (чтобы не перезаписывал настройки)
     local cloud_config_file="/etc/cloud/cloud.cfg.d/99-disable-network-config.cfg"
     if [ ! -f "$cloud_config_file" ]; then
+        mkdir -p "$(dirname "$cloud_config_file")"
         echo "network: {config: disabled}" > "$cloud_config_file"
-        log_info "Управление сетью в cloud-init было отключено."
-    else
-        log_info "Управление сетью в cloud-init уже отключено."
+        log_info "Управление сетью cloud-init отключено."
     fi
 
-    # Резервное копирование и очистка старых конфигов netplan
-    log_info "Поиск сторонних конфигурационных файлов Netplan..."
+    # 2. Резервное копирование старых конфигов
     local netplan_dir="/etc/netplan"
     local main_config_file="99-vpn-script.yaml"
-    local has_other_configs=false
+    mkdir -p "$netplan_dir"
     
-    for file in "$netplan_dir"/*.yaml; do
-        [ -f "$file" ] || continue
-        if [ "$(basename "$file")" != "$main_config_file" ]; then
-            has_other_configs=true
-            break
-        fi
+    # Если есть конфиги, бэкапим их
+    if ls "$netplan_dir"/*.yaml 1> /dev/null 2>&1; then
+        local backup_dir="$netplan_dir/backup_$(date +%F_%H%M%S)"
+        mkdir -p "$backup_dir"
+        log_info "Создаю резервную копию текущих настроек в $backup_dir"
+        mv "$netplan_dir"/*.yaml "$backup_dir/" 2>/dev/null
+    fi
+
+    # 3. Выбор режима настройки
+    echo "------------------------------------------------"
+    echo "Выберите тип подключения для Входящего интерфейса ($IN_IF):"
+    echo "1) DHCP (Автоматический IP от провайдера) [Рекомендуется]"
+    echo "2) Статический IP (Ручной ввод IP, Маски, Шлюза)"
+    echo "3) PPPoE (Логин и пароль)"
+    echo "------------------------------------------------"
+    
+    local net_choice
+    while true; do
+        read -r -p "Ваш выбор [1/2/3]: " net_choice
+        case "$net_choice" in
+            1|2|3) break ;;
+            *) echo -e "${YELLOW}Пожалуйста, введите 1, 2 или 3.${NC}" ;;
+        esac
     done
 
-    if [ "$has_other_configs" = true ]; then
-        local backup_dir="$netplan_dir/backup_$(date +%F_%H%M%S)"
-        echo -e "${YELLOW}[WARNING]${NC} Обнаружены сторонние файлы конфигурации. Создаю резервную копию."
-        mkdir -p "$backup_dir"
-        
-        for file in "$netplan_dir"/*.yaml; do
-            [ -f "$file" ] || continue
-            if [ "$(basename "$file")" != "$main_config_file" ]; then
-                log_info "Архивирую файл: $(basename "$file")"
-                mv "$file" "$backup_dir/"
-            fi
-        done
-        rm -f "$netplan_dir/$main_config_file"
-    else
-        log_info "Сторонние файлы конфигурации не найдены. Очищаю предыдущие настройки."
-        rm -f "$netplan_dir"/*.yaml
-    fi
-    
-    # Сбор данных
-    echo "Выберите вариант настройки входящего интерфейса:"
-    echo "1) Получать IP по DHCP от провайдера/сервера"
-    echo "2) Статическая настройка (ввод параметров вручную)"
-    echo "3) PPPoE-соединение от провайдера (логин/пароль)"
-    read -r -p "Ваш выбор [1/2/3]: " net_choice
-
-    local netplan_config_path="/etc/netplan/99-vpn-script.yaml"
+    local yaml_content=""
 
     if [ "$net_choice" == "1" ]; then
-cat <<EOF > "$netplan_config_path"
-###################################################
-# Файл автоматически сгенерирован скриптом vpn.sh
+        # === DHCP ===
+        log_info "Выбран режим DHCP."
+        yaml_content=$(cat <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    # Входящий интерфейс (белый интернет):
     $IN_IF:
       dhcp4: true
-    # Выходящий интерфейс (локальная сеть):
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
       optional: true
 EOF
+)
     elif [ "$net_choice" == "2" ]; then
-        read -r -p "Введите статический IP для входящего интерфейса: " STATIC_IP
-        read -r -p "Введите префикс (если провайдер например выдал 255.255.255.224, введите 27): " SUBNET_MASK
-        read -r -p "Введите шлюз: " GATEWAY
-        read -r -p "Введите DNS1: " DNS1
-        read -r -p "Введите DNS2: " DNS2
-cat <<EOF > "$netplan_config_path"
-###################################################
-# Файл автоматически сгенерирован скриптом vpn.sh
+        # === STATIC IP ===
+        log_info "Выбран режим Статического IP. Следуйте подсказкам."
+
+        # A. Ввод IP
+        local STATIC_IP
+        while true; do
+            read -r -p "Введите Ваш статический IP (напр. 45.10.20.30): " STATIC_IP
+            if validate_ip_format "$STATIC_IP"; then break; else echo -e "${RED}Неверный формат IP.${NC}"; fi
+        done
+
+        # B. Ввод Маски
+        local INPUT_MASK
+        local CIDR_MASK
+        while true; do
+            echo -e "Введите маску подсети."
+            echo -e "Поддерживаются форматы: ${GREEN}24${NC}, ${GREEN}/24${NC} или ${GREEN}255.255.255.0${NC}"
+            read -r -p "Маска: " INPUT_MASK
+            
+            CIDR_MASK=$(mask_to_cidr "$INPUT_MASK")
+            
+            if [ "$CIDR_MASK" == "error" ] || [ -z "$CIDR_MASK" ]; then
+                echo -e "${RED}Не удалось распознать маску. Попробуйте формат 255.255.255.0 или 24.${NC}"
+            else
+                echo -e "Принята маска: /${CIDR_MASK}"
+                break
+            fi
+        done
+
+        # C. Ввод Шлюза
+        local GATEWAY
+        while true; do
+            read -r -p "Введите основной шлюз (Gateway): " GATEWAY
+            if validate_ip_format "$GATEWAY"; then break; else echo -e "${RED}Неверный формат IP шлюза.${NC}"; fi
+        done
+
+        # D. Ввод DNS
+        local DNS1 DNS2
+        while true; do
+            read -r -p "Введите DNS сервер (по умолчанию 8.8.8.8): " DNS1
+            [ -z "$DNS1" ] && DNS1="8.8.8.8"
+            if validate_ip_format "$DNS1"; then break; else echo -e "${RED}Неверный формат IP DNS.${NC}"; fi
+        done
+        read -r -p "Введите второй DNS (не обязательно): " DNS2
+        [ -n "$DNS2" ] && ! validate_ip_format "$DNS2" && DNS2="" # Сброс если кривой
+
+        local dns_block="addresses: [$DNS1]"
+        if [ -n "$DNS2" ]; then dns_block="addresses: [$DNS1, $DNS2]"; fi
+
+        yaml_content=$(cat <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    # Входящий интерфейс (белый интернет):
     $IN_IF:
       dhcp4: false
-      addresses: [$STATIC_IP/$SUBNET_MASK]
+      addresses: [$STATIC_IP/$CIDR_MASK]
       routes:
         - to: default
           via: $GATEWAY
       nameservers:
-        addresses: [$DNS1, $DNS2]
-    # Выходящий интерфейс (локальная сеть):
+        $dns_block
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
       optional: true
 EOF
+)
 
     elif [ "$net_choice" == "3" ]; then
-        read -r -p "Введите логин PPPoE: " PPPOE_USER
-        read -s -p "Введите пароль PPPoE: " PPPOE_PASS
-        echo ""
-cat <<EOF > "$netplan_config_path"
-###################################################
-# Файл автоматически сгенерирован скриптом vpn.sh
-# Настраивает только физические интерфейсы.
-# PPPoE будет настроен напрямую через pppd.
+        # === PPPoE ===
+        log_info "Выбран режим PPPoE."
+        yaml_content=$(cat <<EOF
 network:
   version: 2
   renderer: networkd
   ethernets:
-    # Входящий интерфейс (транспорт для PPPoE):
-    # Просто активируем интерфейс, не назначая IP.
     $IN_IF:
       dhcp4: no
       dhcp6: no
-    # Выходящий интерфейс (локальная сеть):
     $OUT_IF:
       dhcp4: false
       addresses: [$LOCAL_IP/24]
       optional: true
 EOF
-
-    else
-        error_exit "Неверный выбор варианта настройки сети"
+)
     fi
 
-    chmod 600 "$netplan_config_path"
-    log_info "Применяю настройки netplan..."
-    netplan apply || error_exit "Критическая ошибка: не удалось применить конфигурацию Netplan."
+    # 4. Запись и Применение
+    local config_path="$netplan_dir/$main_config_file"
+    echo "$yaml_content" > "$config_path"
+    chmod 600 "$config_path"
 
-    log_info "Настройки netplan успешно применены. Ожидаю стабилизации сети..."
-    sleep 15 # Пауза для стабилизации сети
+    log_info "Проверка синтаксиса конфигурации..."
+    
+    if netplan generate; then
+        log_info "Синтаксис корректен. Применяю настройки..."
+        netplan apply
+        if [ $? -eq 0 ]; then
+            log_info "Настройки сети успешно применены."
+            echo -e "${YELLOW}Ожидание инициализации сети (10 сек)...${NC}"
+            sleep 10
+        else
+            error_exit "Ошибка при выполнении 'netplan apply'. Проверьте настройки."
+        fi
+    else
+        log_error "Сгенерирован некорректный файл Netplan! Откат изменений."
+        rm -f "$config_path"
+        if ls "$backup_dir"/*.yaml 1> /dev/null 2>&1; then
+             mv "$backup_dir"/*.yaml "$netplan_dir/"
+             netplan apply
+        fi
+        error_exit "Настройка сети прервана из-за внутренней ошибки валидации."
+    fi
 }
 
 # Настройка PPPoE
