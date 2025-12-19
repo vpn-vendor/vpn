@@ -6,14 +6,11 @@
 #
 # ==============================================================================
 #
-#   Версия: 2.5.4
+#   Версия: 2.5.5
 #
-#   [~] Улучшен метод install_packages:
-#         - Добавлена блокировка диалоговых окон во время установки.  
-#         - Исправлен порядок очистки конфликтных ПО.
-#         - Убран шум из логов во время установки.
-#   [~] Улучшен метод preselect_interfaces:
-#         - Исправлена проблема парсинга и не верной валидации данных.
+#   [~] Улучшен метод select_interfaces:
+#         - Существенное улучшение надежности валидации.
+#         - Защита от "дурака" с выбором двух раз одного и того же интерфейса.
 #
 # ==============================================================================
 
@@ -303,47 +300,101 @@ preselect_interfaces() {
 
 # Выбор сетевых интерфейсов
 select_interfaces() {
-    echo -e "${GREEN}Получаю список сетевых интерфейсов...${NC}"
-    all_interfaces=$(ip -o link show | awk '$2 != "lo:" {print $2}' | sed 's/://')
-    full_list=""
-    count=0
+    log_info "Сканирование сетевых интерфейсов..."
+
+    # 1. Сбор и отображение интерфейсов
+    echo -e "${GREEN}Обнаруженные интерфейсы:${NC}"
+    
+    unset interfaces_array
+    declare -A interfaces_array
+    local count=0
+    local full_list=""
+    
+    # Получаем список интерфейсов. Исключая lo, tun/wg и другие.
+    local all_interfaces=$(ip -o link show | awk -F': ' '$2 !~ /^lo|^tun|^wg|^docker|^br/ {print $2}')
+
+    if [ -z "$all_interfaces" ]; then
+        error_exit "Не найдено физических сетевых интерфейсов!"
+    fi
+
     for iface in $all_interfaces; do
         count=$((count+1))
-        ip_addr=$(ip -o -4 addr show "$iface" 2>/dev/null | awk '{print $4}' | cut -d'/' -f1)
-        if [ -z "$ip_addr" ]; then
-            ip_addr="(нет IP)"
-        fi
+        local ip_addr=$(ip -o -4 addr show "$iface" 2>/dev/null | awk '{print $4}' | cut -d'/' -f1)
+        [ -z "$ip_addr" ] && ip_addr="(нет IP)"
+        
         full_list+="$count) $iface : $ip_addr\n"
         interfaces_array[$count]="$iface"
     done
-    echo -e "Доступные сетевые интерфейсы:\n$full_list"
+    
+    echo -e "$full_list"
     echo ""
 
-    read -r -p "Введите номер ВХОДЯЩЕГО интерфейса (подключен к интернету): " in_num
-    IN_IF="${interfaces_array[$in_num]}"
-    if [ -z "$IN_IF" ]; then
-        error_exit "Некорректный выбор входящего интерфейса"
-    fi
-
-    read -r -p "Введите номер ВЫХОДЯЩЕГО интерфейса (локальная сеть): " out_num
-    OUT_IF="${interfaces_array[$out_num]}"
-    if [ -z "$OUT_IF" ]; then
-        error_exit "Некорректный выбор выходящего интерфейса"
-    fi
-
-    log_info "Выбран входящий интерфейс: $IN_IF"
-    log_info "Выбран выходящий интерфейс: $OUT_IF"
-
-    read -r -p "Использовать стандартный локальный IP-адрес (192.168.69.1)? [y/n]: " use_default
-    if [ "$use_default" == "n" ]; then
-        read -r -p "Введите новый локальный IP-адрес в формате 192.168.X.1: " LOCAL_IP
-        if [[ ! $LOCAL_IP =~ ^192\.168\.[0-9]{1,3}\.1$ ]]; then
-            error_exit "Неверный формат локального IP"
+    # 2. Выбор ВХОДЯЩЕГО интерфейса (WAN)
+    while true; do
+        read -r -p "Введите номер ВХОДЯЩЕГО интерфейса (Интернет): " in_num
+        if [[ "$in_num" =~ ^[0-9]+$ ]] && [ -n "${interfaces_array[$in_num]}" ]; then
+            IN_IF="${interfaces_array[$in_num]}"
+            break
+        else
+            echo -e "${YELLOW}Ошибка: Введите корректный номер из списка (1-$count).${NC}"
         fi
-    else
-        LOCAL_IP="192.168.69.1"
-    fi
-    log_info "Локальный IP для локальной сети: $LOCAL_IP"
+    done
+    log_info "Выбран WAN интерфейс: $IN_IF"
+
+    # 3. Выбор ВЫХОДЯЩЕГО интерфейса (LAN)
+    while true; do
+        read -r -p "Введите номер ВЫХОДЯЩЕГО интерфейса (Локальная сеть): " out_num
+        
+        if [[ "$out_num" =~ ^[0-9]+$ ]] && [ -n "${interfaces_array[$out_num]}" ]; then
+            local selected_out="${interfaces_array[$out_num]}"
+            
+            # Проверка на конфликт
+            if [ "$selected_out" == "$IN_IF" ]; then
+                echo -e "${RED}Ошибка: Выходящий интерфейс не может совпадать с входящим ($IN_IF).${NC}"
+                echo "Выберите другой порт для локальной сети."
+            else
+                OUT_IF="$selected_out"
+                break
+            fi
+        else
+            echo -e "${YELLOW}Ошибка: Введите корректный номер из списка.${NC}"
+        fi
+    done
+    log_info "Выбран LAN интерфейс: $OUT_IF"
+
+    # 4. Настройка локалки
+    while true; do
+        read -r -p "Использовать стандартный IP шлюза (192.168.69.1)? [y/n]: " use_default
+        case "${use_default,,}" in
+            y|yes|"") # Пустой ввод = да
+                LOCAL_IP="192.168.69.1"
+                break
+                ;;
+            n|no)
+                # Ввод кастомного IP
+                while true; do
+                    read -r -p "Введите IP шлюза (строго формат 192.168.X.1): " user_ip
+                    # Валидность
+                    if [[ "$user_ip" =~ ^192\.168\.([0-9]{1,3})\.1$ ]]; then
+                        octet="${BASH_REMATCH[1]}"
+                        if [ "$octet" -ge 0 ] && [ "$octet" -le 255 ]; then
+                            LOCAL_IP="$user_ip"
+                            break 2
+                        else
+                            echo -e "${YELLOW}Ошибка: Октет $octet выходит за пределы 0-255.${NC}"
+                        fi
+                    else
+                        echo -e "${YELLOW}Ошибка: Неверный формат. Требуется 192.168.X.1 (где X - число 0-255, например 192.168.101.1).${NC}"
+                    fi
+                done
+                ;;
+            *)
+                echo -e "${YELLOW}Пожалуйста, введите буквой 'y' (да) или 'n' (нет).${NC}"
+                ;;
+        esac
+    done
+
+    log_info "Настройки сети приняты: WAN=$IN_IF, LAN=$OUT_IF, GW=$LOCAL_IP"
 }
 
 # Настройка netplan
@@ -1471,7 +1522,7 @@ echo -e "${BLUE}      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???! 
 echo -e "${BLUE}       :~!77!~            7P             :??????J^                                                  ${NC}"
 echo ""
 echo -e "${YELLOW}==============================================${NC}"
-echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.4)${NC}"
+echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.5)${NC}"
 echo -e "${YELLOW}==============================================${NC}"
 echo ""
 echo "Выберите действие:"
