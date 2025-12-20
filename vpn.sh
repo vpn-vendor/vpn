@@ -11,6 +11,9 @@
 #   [~] Модификация метода configure_pppd_direct:
 #         - Внедрен Watchdog для отказоустойчивости при перезагрузке и нестабильной сети.
 #         - Добавлена очистка дублей при повторных запусках скрипта.
+#   [~] Улучшение configure_dns:
+#         - Добавлен Symlink fix.
+#         - Внедрен FallbackDNS для надежности на случай проблем DNS от провайдера.
 #
 # ==============================================================================
 
@@ -725,13 +728,43 @@ EOF
 
 # Настройка DNS
 configure_dns() {
-    log_info "Настраиваю DNS"
-    # Очистка старых DNS-настроек в resolved.conf
-    sed -i '/^\[Resolve\]/,/^\[/ {/^\(DNS\|Domains\)=/d}' /etc/systemd/resolved.conf
+    log_info "Настройка DNS (systemd-resolved)..."
+
+    # 1. Сим-линк
+    local target_resolv="/run/systemd/resolve/stub-resolv.conf"
     
-    # Применение настроек
+    if [ "$(readlink /etc/resolv.conf)" != "$target_resolv" ]; then
+        log_info "Обнаружен некорректный сим-линк /etc/resolv.conf. Исправляю..."
+        # Бэкап
+        if [ ! -L /etc/resolv.conf ] && [ -f /etc/resolv.conf ]; then
+            mv /etc/resolv.conf /etc/resolv.conf.bak
+        else
+            rm -f /etc/resolv.conf
+        fi
+        ln -sf "$target_resolv" /etc/resolv.conf
+    fi
+
+    # 2. Конфиг
+    cat <<EOF > /etc/systemd/resolved.conf
+# Файл автоматически сгенериван скриптом vpn.sh
+[Resolve]
+FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888
+# Локальный кеш - yes
+Cache=yes
+DNSStubListener=yes
+MulticastDNS=no
+EOF
+    log_info "Конфигурация /etc/systemd/resolved.conf обновлена."
+
+    # 3. Финал
+    systemctl daemon-reload
     systemctl restart systemd-resolved || error_exit "Не удалось перезапустить systemd-resolved"
-    log_info "DNS настроены через systemd-resolved"
+
+    if ! systemctl is-active --quiet systemd-resolved; then
+         error_exit "Критическая ошибка: служба DNS не запустилась."
+    fi
+
+    log_info "DNS успешно настроен и проверен."
 }
 
 # Настройка DHCP-сервера (isc-dhcp-server)
