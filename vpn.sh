@@ -8,12 +8,9 @@
 #
 #   Версия: 2.5.5
 #
-#   [~] Улучшен метод select_interfaces:
-#         - Существенное улучшение надежности валидации.
-#         - Защита от "дурака" с выбором двух раз одного и того же интерфейса.
-#   [~] Существенное улучшение безопасности метода configure_netplan:
-#         - Добавлены продуманные валидаторы в разные части метода.
-#         - Внедрено безопасное применение netplan + откаты.
+#   [~] Модификация метода configure_pppd_direct:
+#         - Внедрен Watchdog для отказоустойчивости при перезагрузке и нестабильной сети.
+#         - Добавлена очистка дублей при повторных запусках скрипта.
 #
 # ==============================================================================
 
@@ -623,79 +620,107 @@ EOF
 
 # Настройка PPPoE
 configure_pppd_direct() {
-    log_info "Настраиваю PPPoE-соединение напрямую через pppd"
+    log_info "Настройка PPPoE-соединения..."
     
+    if ! command -v pppd >/dev/null; then
+        apt-get install -y ppp || error_exit "Не удалось установить ppp."
+    fi
+
     local peer_file="/etc/ppp/peers/dsl-provider"
 
-    # Создание peer-файла
+    # 1. Конфигурация
     cat <<EOF > "$peer_file"
-noauth
-defaultroute
-replacedefaultroute
-hide-password
-noipdefault
-persist
 plugin rp-pppoe.so $IN_IF
 user "$PPPOE_USER"
-usepeerdns
+noauth
+hide-password
+defaultroute
+replacedefaultroute
+noipdefault
+persist
+maxfail 0
+holdoff 10
+lcp-echo-interval 30
+lcp-echo-failure 4
 mtu 1492
 mru 1492
+usepeerdns
 EOF
-    if [ $? -ne 0 ]; then
-        error_exit "Не удалось создать peer-файл $peer_file"
-    fi
-    log_info "Peer-файл $peer_file успешно создан"
-
-    # Сохранение учетных данных
-    (umask 077; echo "\"$PPPOE_USER\" * \"$PPPOE_PASS\"" > /etc/ppp/chap-secrets)
-    if [ $? -ne 0 ]; then
-        error_exit "Не удалось записать данные в /etc/ppp/chap-secrets"
-    fi
     
-    (umask 077; echo "\"$PPPOE_USER\" * \"$PPPOE_PASS\"" > /etc/ppp/pap-secrets)
     if [ $? -ne 0 ]; then
-        error_exit "Не удалось записать данные в /etc/ppp/pap-secrets"
+        error_exit "Не удалось создать файл настроек $peer_file"
     fi
-    log_info "Учетные данные PPPoE сохранены"
+    log_info "Конфигурация провайдера создана"
 
-    log_info "Отключаю автозапуск PPPoE через systemd..."
-    systemctl disable ppp@dsl-provider.service >/dev/null 2>&1 || log_info "Сервис ppp@dsl-provider не был включен."
-    local override_dir="/etc/systemd/system/ppp@dsl-provider.service.d"
-    rm -rf "$override_dir"
-    systemctl daemon-reload
+    # 2. Сохранение паролей
+    local secrets_entry="\"$PPPOE_USER\" * \"$PPPOE_PASS\" *"
+    
+    # Очистка старый записей
+    sed -i "/^\"$PPPOE_USER\"/d" /etc/ppp/chap-secrets
+    sed -i "/^\"$PPPOE_USER\"/d" /etc/ppp/pap-secrets
 
-    # Автозапуска через crontab
-    log_info "Настраиваю автозапуск PPPoE через crontab для максимальной надежности"
-    local cron_task="@reboot root /usr/bin/pon dsl-provider"
+    (umask 077; echo "$secrets_entry" >> /etc/ppp/chap-secrets)
+    (umask 077; echo "$secrets_entry" >> /etc/ppp/pap-secrets)
+    
+    log_info "Учетные данные PPPoE обновлены."
+
+    # 3. Отключение Systemd
+    if systemctl is-enabled --quiet ppp@dsl-provider.service; then
+        systemctl disable ppp@dsl-provider.service >/dev/null 2>&1
+        systemctl stop ppp@dsl-provider.service >/dev/null 2>&1
+    fi
+
+    rm -rf "/etc/systemd/system/ppp@dsl-provider.service.d"
+    
+    # 4. Cron
     local cron_file="/etc/crontab"
     
-    # Проверка, не добавлена ли уже задача в crontab
-    if ! grep -qF "$cron_task" "$cron_file"; then
-        # Добавление задачи
-        echo "$cron_task" >> "$cron_file"
-        if [ $? -ne 0 ]; then
-            error_exit "Не удалось добавить задачу в $cron_file"
-        fi
-        log_info "Задача для автозапуска PPPoE успешно добавлена в $cron_file"
-    else
-        log_info "Задача для автозапуска PPPoE уже существует в $cron_file"
-    fi
+    # A. Задача на старт
+    local boot_task="@reboot root sleep 20 && /usr/bin/pon dsl-provider"
+    
+    # B. Watchdog
+    local watch_task="* * * * * root pgrep -f 'pppd call dsl-provider' > /dev/null || /usr/bin/pon dsl-provider"
 
-    # Запуск соединения
-    log_info "Запускаю PPPoE-соединение (pon dsl-provider)..."
-    pon dsl-provider || error_exit "Команда 'pon dsl-provider' завершилась с ошибкой. Проверьте системные логи."
+    # Очистка старых задач
+    sed -i '/dsl-provider/d' "$cron_file"
+    
+    # Добавление новых задач
+    echo "$boot_task" >> "$cron_file"
+    echo "$watch_task" >> "$cron_file"
+    
+    log_info "В Crontab добавлены задачи автозапуска (Delay 20s) и восстановления (Watchdog)."
 
-    # Ожидание интерфейса ppp0
-    log_info "Ожидаю появления интерфейса ppp0..."
+    # 5. Первый запуск
+    log_info "Инициализация соединения..."
+    poff dsl-provider >/dev/null 2>&1
+    sleep 2
+    pon dsl-provider
+    
+    # 6. Ожидание интерфейса
+    log_info "Ожидаю поднятия интерфейса ppp0..."
     local ppp_wait_time=0
+    local max_wait=45
+    
     while ! ip link show ppp0 &>/dev/null; do
         sleep 1
         ppp_wait_time=$((ppp_wait_time + 1))
-        if [ "$ppp_wait_time" -ge 45 ]; then
-            error_exit "Интерфейс ppp0 не появился в течение 45 секунд. Проверьте логи ('plog' или 'journalctl -u ppp@dsl-provider.service')."
+        
+        # Индикатор прогресса
+        if (( ppp_wait_time % 5 == 0 )); then
+            echo -n "."
+        fi
+        
+        if [ "$ppp_wait_time" -ge "$max_wait" ]; then
+            echo ""
+            log_error "Таймаут ожидания ppp0 ($max_wait сек)."
+            log_error "Возможные причины: неверный логин/пароль или нет линка на $IN_IF."
+            log_error "Скрипт продолжит работу, но проверьте 'journalctl -xe' или 'plog'."
+            return 0
         fi
     done
-    log_info "Интерфейс ppp0 успешно поднят."
+    
+    echo ""
+    log_info "Интерфейс ppp0 успешно поднят! IP: $(ip -4 addr show ppp0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')"
 }
 
 # Настройка DNS
