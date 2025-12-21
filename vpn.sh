@@ -8,12 +8,10 @@
 #
 #   Версия: 2.5.5
 #
-#   [~] Модификация метода configure_pppd_direct:
-#         - Внедрен Watchdog для отказоустойчивости при перезагрузке и нестабильной сети.
-#         - Добавлена очистка дублей при повторных запусках скрипта.
-#   [~] Улучшение configure_dns:
-#         - Добавлен Symlink fix.
-#         - Внедрен FallbackDNS для надежности на случай проблем DNS от провайдера.
+#   [~] Апгрейд configure_dhcp:
+#         - Полная оптимизация под VoIP.
+#         - Добавлен авто-рестарт службы.
+#         - Используются прямые внешние DNS запросы уменьшающие задежку (mc) важную для VoIP.
 #
 # ==============================================================================
 
@@ -769,40 +767,80 @@ EOF
 
 # Настройка DHCP-сервера (isc-dhcp-server)
 configure_dhcp() {
-    log_info "Настраиваю DHCP-сервер (isc-dhcp-server)"
-    DHCP_CONF="/etc/dhcp/dhcpd.conf"
-    DHCP_DEFAULT="/etc/default/isc-dhcp-server"
+    log_info "Настройка DHCP-сервера (isc-dhcp-server) с оптимизацией под VoIP..."
 
-    # Резервное копирование конфига
-    [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak"
+    local DHCP_CONF="/etc/dhcp/dhcpd.conf"
+    local DHCP_DEFAULT="/etc/default/isc-dhcp-server"
 
-    # Генерация основного конфига dhcpd.conf
+    # 1. Авто-рестарт
+    local override_dir="/etc/systemd/system/isc-dhcp-server.service.d"
+    mkdir -p "$override_dir"
+    cat <<EOF > "$override_dir/override.conf"
+[Service]
+Restart=always
+RestartSec=10
+EOF
+    systemctl daemon-reload
+    log_info "Внедрен авто-рестар DHCP ТОЛЬКО на случай падений."
+
+    # 2. Бэкап
+    [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak_$(date +%F_%H%M%S)"
+
+    # 3. Конфиг под VoIP    
     cat <<EOF > "$DHCP_CONF"
-default-lease-time 600;
-max-lease-time 7200;
+# Оптимизировано @vpn_vendor для VoIP и стабильной работы офиса
+default-lease-time 604800;
+max-lease-time 604800;
 authoritative;
+log-facility local7;
+
 subnet ${LOCAL_IP%.*}.0 netmask 255.255.255.0 {
     range ${LOCAL_IP%.*}.2 ${LOCAL_IP%.*}.254;
     option routers $LOCAL_IP;
     option subnet-mask 255.255.255.0;
+    
     option domain-name "vpn.vendor";
-    option domain-name-servers 94.140.14.14, 94.140.15.15;
+    option domain-search "vpn.vendor";
+    
+    option domain-name-servers 94.140.14.14, 8.8.8.8;
 }
 EOF
+    log_info "Конфигурация dhcpd.conf обновлена."
 
-    # Указание рабочего интерфейса
+    # 4. Привязка к интерфейсу Lan
     if grep -q "^INTERFACESv4=" "$DHCP_DEFAULT"; then
         sed -i "s/^INTERFACESv4=.*/INTERFACESv4=\"$OUT_IF\"/" "$DHCP_DEFAULT"
     else
         echo "INTERFACESv4=\"$OUT_IF\"" >> "$DHCP_DEFAULT"
     fi
 
-    # Применение прав и перезапуск службы
-    chown root:dhcpd /var/lib/dhcp/dhcpd.leases || error_exit "chown root:dhcpd /var/lib/dhcp/dhcpd.leases не был применен"
-    chmod 664 /var/lib/dhcp/dhcpd.leases || error_exit "chmod 664 /var/lib/dhcp/dhcpd.leases не был применен"
-    systemctl restart isc-dhcp-server || error_exit "isc-dhcp-server не был перезапущен"
-    systemctl enable isc-dhcp-server || error_exit "isc-dhcp-server не был включён для автозапуска"
-    log_info "DHCP-сервер настроен"
+    # 5. Права
+    if [ ! -f /var/lib/dhcp/dhcpd.leases ]; then
+        touch /var/lib/dhcp/dhcpd.leases
+    fi
+    chown root:dhcpd /var/lib/dhcp/dhcpd.leases
+    chmod 664 /var/lib/dhcp/dhcpd.leases
+    
+    # 6. Запуск
+    systemctl enable isc-dhcp-server >/dev/null 2>&1
+    systemctl restart isc-dhcp-server
+
+    # Диагностика
+    if systemctl is-active --quiet isc-dhcp-server; then
+        log_info "DHCP-сервер успешно запущен."
+    else
+        echo -e "${YELLOW}[WARNING] DHCP-сервер не запустился мгновенно.${NC}"
+        echo "Возможная причина: Сетевой кабель не подключен к интерфейсу $OUT_IF."
+        echo "Используется авто-рестарт, служба запустится сама, как только вы подключите кабель в выходящий интерфейс - $OUT_IF."
+        
+        # Проверка линка
+        if [ -f "/sys/class/net/$OUT_IF/carrier" ]; then
+            local link_status=$(cat "/sys/class/net/$OUT_IF/carrier")
+            if [ "$link_status" != "1" ]; then
+                 echo -e "${RED}Обнаружено: Нет физического линка на $OUT_IF! Подключите свич/устройство и подождите 10 секунд служба подтянет все сама...${NC}"
+            fi
+        fi
+    fi
 }
 
 # Настройка iptables (Kill Switch)
