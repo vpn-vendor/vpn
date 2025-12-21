@@ -478,7 +478,6 @@ configure_netplan() {
     echo "3) PPPoE (Логин и пароль)"
     echo "------------------------------------------------"
     
-    local net_choice
     while true; do
         read -r -p "Ваш выбор [1/2/3]: " net_choice
         case "$net_choice" in
