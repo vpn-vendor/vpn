@@ -14,6 +14,7 @@
 #         - Используются прямые внешние DNS запросы уменьшающие задежку (mc) важную для VoIP.
 #   [~] Улучшение configure_iptables:
 #         - Ядро перенастроено полностью под VoIP.
+#   [~] Более красивое и понятное главное меню.
 #
 # ==============================================================================
 
@@ -745,7 +746,7 @@ configure_dns() {
 
     # 2. Конфиг
     cat <<EOF > /etc/systemd/resolved.conf
-# Файл автоматически сгенериван скриптом vpn.sh
+# Файл автоматически сгенерирован скриптом vpn.sh
 [Resolve]
 FallbackDNS=8.8.8.8 1.1.1.1 2001:4860:4860::8888
 # Локальный кеш - yes
@@ -782,7 +783,7 @@ Restart=always
 RestartSec=10
 EOF
     systemctl daemon-reload
-    log_info "Внедрен авто-рестар DHCP ТОЛЬКО на случай падений."
+    log_info "Внедрен авто-рестарт DHCP ТОЛЬКО на случай падений."
 
     # 2. Бэкап
     [ -f "$DHCP_CONF" ] && cp "$DHCP_CONF" "${DHCP_CONF}.bak_$(date +%F_%H%M%S)"
@@ -1761,11 +1762,27 @@ check_execution() {
     log_info "Проверка выполнения завершена"
 }
 
-# --- Основной блок выполнения ---
+# --- Основной блок ---
+
+# 1. Проверка (до запуска меню)
 check_system_requirements
 
+# Очистка экрана
+clear
 
-echo ""
+# 2. Определение текущего статуса
+CURRENT_STATUS="${RED}НЕ УСТАНОВЛЕН${NC}"
+VPN_IP=""
+
+# Проверяем tun0
+if ip addr show tun0 &>/dev/null; then
+    VPN_IP=$(ip -4 addr show tun0 | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    CURRENT_STATUS="${GREEN}АКТИВЕН (IP: $VPN_IP)${NC}"
+elif [ -f "/etc/openvpn/server.conf" ]; then
+    CURRENT_STATUS="${YELLOW}УСТАНОВЛЕН, НО остановлен${NC}"
+fi
+
+# 3. Главного Меню
 echo -e "${BLUE}        .^~!!!~.                                                             .J:                    ${NC}"
 echo -e "${BLUE}       ?5777~!?P7 ..    .    ::    . ::           .    .   ::.   . .:.    .:.:@~   :::    . :.      ${NC}"
 echo -e "${BLUE}      Y5.JY7YG ~&.:B!  7G 7BJ?JG~ ~#J?JG~        :B7  7B.~5?7YY. PP??PY  7G??5@~ ~PJ?JP~ ~#YJ7      ${NC}"
@@ -1774,72 +1791,106 @@ echo -e "${BLUE}     ^&:~P??Y5?5^   5GGJ  ?&~.:G5 !&.  PP          YGGY  GP^:^^ 
 echo -e "${BLUE}      JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :?J?!?: .7J??!  :J.        ${NC}"
 echo -e "${BLUE}       :~!77!~            7P             :??????J^                                                  ${NC}"
 echo ""
-echo -e "${YELLOW}==============================================${NC}"
-echo -e "${YELLOW}  Установка VPN-сервера с веб-интерфейсом (v2.5.5)${NC}"
-echo -e "${YELLOW}==============================================${NC}"
+echo -e "${YELLOW}================================================================${NC}"
+echo -e "   VPN-Panel от @vpn_vendor (v2.5.5)"
+echo -e "${YELLOW}================================================================${NC}"
+echo -e "   Статус сервера: $CURRENT_STATUS"
 echo ""
 echo "Выберите действие:"
-echo "1) Установить и настроить сервер (VPN-шлюз)"
-echo "2) Настроить для раздачи белого интернета в локальную сеть (без VPN и веб-панели) [БЕТА-ФУНКЦИЯ]"
-echo "3) Удалить все настройки сервера"
+echo -e "1) ${GREEN}Установить / Обновить / Починить${NC} VPN-сервер (Рекомендуется)"
+echo "   - Полная перенастройка сети, обновление конфигов, исправление ошибок."
 echo ""
-read -r -p "Ваш выбор [1/2/3]: " action_choice
+echo -e "2) Настроить режим ${BLUE}Интернет-Шлюза${NC} [БЕТА]"
+echo "   - Только раздача белого IP в локальную сеть. БЕЗ VPN и Веб-панели."
+echo ""
+echo -e "3) ${RED}Удалить все настройки${NC} (Сброс до заводских)"
+echo "   - Удаление служб, очистка сети, удаление файлов."
+echo ""
+echo "4) Выйти"
+echo ""
 
-# Глобальный флаг для режима работы. По умолчанию используется основной режим.
+# Цикл выбора действия
+while true; do
+    read -r -p "Ваш выбор [1/2/3/4]: " action_choice
+    case "$action_choice" in
+        1|2|3|4) break ;;
+        *) echo -e "${YELLOW}Введите число от 1 до 4.${NC}" ;;
+    esac
+done
+
+# Флаг режима
 ROUTING_MODE="VPN"
 
-if [ "$action_choice" == "2" ]; then
-    echo -e "\n${RED}[ПРЕДУПРЕЖДЕНИЕ]${NC} Вы выбрали ${YELLOW}[БЕТА-ФУНКЦИЮ]]${NC}."
-    echo "В этом режиме НЕ будут установлены VPN, веб-интерфейс и связанные с ними службы."
-    echo "Сервер будет настроен ТОЛЬКО как шлюз для раздачи БЕЛОГО интернета в локальную сеть."
-    echo "Функция находится в разработке и может содержать ошибки/конфликты связанные с пакетами или службами"
-    read -r -p "Вы уверены, что хотите продолжить? [y/n]: " confirmation
-    if [[ "$confirmation" != "y" ]]; then
+if [ "$action_choice" == "4" ]; then
+    echo "Выход из установщика."
+    exit 0
+
+elif [ "$action_choice" == "3" ]; then
+    echo -e "\n${RED}[ВНИМАНИЕ]${NC} Вы запускаете полное удаление."
+    read -r -p "Вы уверены? Это действие необратимо [y/N]: " confirm_del
+    if [[ "${confirm_del,,}" == "y" ]]; then
+        remove_configuration
+        echo -e "${YELLOW}[Скрипт завершен]${NC} Система очищена."
+        exit 0
+    else
+        echo "Отмена удаления."
+        exit 0
+    fi
+
+elif [ "$action_choice" == "2" ]; then
+    echo -e "\n${RED}[ПРЕДУПРЕЖДЕНИЕ]${NC} Вы выбрали режим Интернет-Шлюза (Direct)."
+    echo "В этом режиме VPN, Веб-интерфейс и шифрование БУДУТ ОТКЛЮЧЕНЫ."
+    echo "Сервер будет работать как обычный роутер раздавая БЕЛЫЙ интернет."
+    read -r -p "Вы уверены, что хотите продолжить? [y/N]: " confirmation
+    if [[ "${confirmation,,}" != "y" ]]; then
         echo "Отмена операции."
         exit 0
     fi
     ROUTING_MODE="DIRECT"
-    action_choice="1"
-
-elif [ "$action_choice" == "3" ]; then
-    remove_configuration
-    echo -e "${YELLOW}[Завершение скрипта]${NC}"
-    exit 0
-elif [ "$action_choice" != "1" ]; then
-    error_exit "Неверный выбор. Выберите 1, 2 или 3"
 fi
 
-# Выполнение установки и настройки
 install_packages
 configure_usb_automount
 configure_network_services
+
+# Настройка интерфейсов
 preselect_interfaces
 
-# Выбор PPPOE-соединения
+# PPPoE
 if [ "$net_choice" == "3" ]; then
     configure_pppd_direct
 fi
 
-# Определяем внешний интерфейс для NAT
+# Определение WAN
 WAN_IFACE="$IN_IF"
 if [ "$net_choice" == "3" ]; then
-    # Для PPPoE внешний интерфейс всегда ppp0
     WAN_IFACE="ppp0"
 fi
 
-configure_dns
-configure_dhcp
-configure_iptables
+# Службы
+configure_dns   # (Systemd-resolved + Fallback)
+configure_dhcp  # (ISC-DHCP VoIP Optimized)
+configure_iptables # (KillSwitch + VoIP Sysctl)
+
+# Чекер
 wait_for_dns
 
 # === Блок для режима VPN-шлюза ===
 if [ "$ROUTING_MODE" == "VPN" ]; then
-    log_info "Выполняется настройка для режима VPN-шлюза..."
+    log_info "Запуск установки компонентов VPN и Веб-интерфейса..."
+    
+    # Демон MTU
     configure_mtu_daemon
+    
+    # OpenVPN конфиг
     configure_vpn
+    
+    # Веб-часть
     configure_web_interface
     configure_apache
     configure_shellinabox
+    
+    # Мониторинг
     configure_ping_daemon
     configure_metrics_services
     telegram_bot
@@ -1847,24 +1898,31 @@ if [ "$ROUTING_MODE" == "VPN" ]; then
 fi
 # ==================================
 
+# Финал
 finalize_setup
 check_internet_connection
 
-# Финальная проверка с анимацией
+# Финальная проверка + анимацией
 check_execution
 
-echo -e "\n${GREEN}[OK]${NC} Установка завершена успешно!"
+echo -e "\n${GREEN}[SUCCESS]${NC} Установка завершена успешно!"
 echo ""
-echo -e "\n${YELLOW}[ВНИМАТЕЛЬНО ПРОЧИТАТЬ]${NC}"
-echo "После перезагрузки сервера все настройки будут применены и выданы правильные айпи-адреса в локальную сеть."
-echo "Перезагружайте оборудование свичи/роутеры и сервер после того как успешно настроили все через скрипт vpn.sh для стабильности и дополнительной проверки!"
+echo -e "${YELLOW}================================================================${NC}"
+echo -e "   [ВАЖНО] ИНСТРУКЦИЯ ПО ЗАВЕРШЕНИЮ:"
+echo -e "${YELLOW}================================================================${NC}"
+echo "1. Скрипт настроил IP-адресацию, DHCP и Firewall."
+echo "2. Настоятельно рекомендуется ${RED}ПЕРЕЗАГРУЗИТЬ СЕРВЕР${NC} (reboot) сейчас."
+echo "   Это гарантирует, что новое ядро, модули и службы (netplan, dhcp) стартуют чисто."
+echo "3. После перезагрузки переподключите свич/роутер локальной сети, чтобы устройства получить новые IP."
 echo ""
 
 if [ "$ROUTING_MODE" == "VPN" ]; then
-    echo "Веб-интерфейс настроен. Ваш веб -сайт доступен по адресу -> http://$LOCAL_IP/"
-    echo "Логин и пароль от веб-сайта будет таким же как и от сервера"
+    echo -e "Веб-интерфейс доступен по адресу: ${GREEN}http://$LOCAL_IP/${NC}"
+    echo "Логин и пароль совпадают с системными (root/ваш пароль)."
 fi
-
-echo "Удачи и приятного использования!"
+echo ""
+echo "Спасибо за использование vpn.sh (v2.5.5)!"
+echo "Обращайтесь за помощью в телеграмм @vpn_vendor"
 
 exit 0
+
