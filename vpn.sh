@@ -949,28 +949,48 @@ EOF
 
 # Ожидание доступности DNS
 wait_for_dns() {
-    log_info "Ожидаю полной готовности сети и доступности DNS..."
-    local max_wait_time=60 # Максимальное время ожидания в секундах
+    log_info "Диагностика сети: Проверка доступа в Интернет и работы DNS..."
+    local max_wait_time=60
     local elapsed_time=0
     local spinner="/-\\|"
     local i=0
-    
-    while ! (host github.com &> /dev/null || host google.com &> /dev/null); do
+
+    # 1. Ping 8.8.8.8
+    while ! ping -c 1 -W 2 8.8.8.8 &> /dev/null; do
         if [ "$elapsed_time" -ge "$max_wait_time" ]; then
             echo ""
-            error_exit "Не удалось получить доступ к сети с рабочим DNS в течение $max_wait_time секунд."
+            log_error "Таймаут: Нет пинга до 8.8.8.8."
+            error_exit "Интернет недоступен. Проверьте настройки IP, шлюза или кабель/линк."
         fi
 
-        # Анимация спиннера
+        # Анимация
         i=$(( (i+1) %4 ))
-        printf "\r[%c] Проверка доступности DNS... (${elapsed_time}с)" "${spinner:$i:1}"
+        printf "\r[%c] Проверка пинга на IP... (${elapsed_time}с)" "${spinner:$i:1}"
+        
+        sleep 1
+        elapsed_time=$((elapsed_time + 1))
+    done
+    echo ""
+    log_info "Доступ по IP (8.8.8.8) есть. Идем дальше..."
+
+    # 2. Ping google.com
+    elapsed_time=0
+    while ! ping -c 1 -W 2 google.com &> /dev/null; do
+        if [ "$elapsed_time" -ge "$max_wait_time" ]; then
+            echo ""
+            log_error "Таймаут: Нет пинга до google.com."
+            error_exit "Интернет есть, но DNS не работает. Проверьте настройки DNS в Netplan."
+        fi
+
+        i=$(( (i+1) %4 ))
+        printf "\r[%c] Проверка пинга на DNS... (${elapsed_time}с)" "${spinner:$i:1}"
         
         sleep 1
         elapsed_time=$((elapsed_time + 1))
     done
 
     echo ""
-    log_info "Сеть и DNS полностью работоспособны."
+    log_info "Сеть и DNS полностью работают."
 }
 
 # Настройка автозапуска OpenVPN
