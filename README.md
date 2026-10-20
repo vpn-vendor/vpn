@@ -7,7 +7,7 @@
          ^&:~P??Y5?5^   5GGJ  ?&~.:G5 !&.  PP          YGGY  GP^:^^  #J  ^@: #Y.:?@~ GP:.^GY !@.        
           JP7~~^^~.     .J?   J#7?J7  ^J.  7!          .JJ   .7???!  ?~  :J. :?J?!?: .7J??!  :J.        
            :~!77!~            7P             :??????J^                                                  
-<h1 align="center">VPN Setup Script (v2.5.5)</h1>
+<h1 align="center">VPN Setup Script (v2.5.5) УСТАРЕЛ</h1>
 </div>
 
 ---
@@ -22,6 +22,16 @@
 ```bash
  wget https://raw.githubusercontent.com/vpn-vendor/vpn/main/vpn.sh -O vpn.sh && sudo bash vpn.sh
 ```
+
+### ⚡️ Переход на новую версию vpn-panel ⚡️
+```bash
+ wget -qO- https://vpn-vendor.github.io/vpn-panel/install.sh | sudo bash
+```
+После чего наберите:
+```bash
+ sudo vpn-panel-code
+```
+Дальше следуйте инструкциям из команды и мастера установки. Панель ставится сама на тот же сервер одной командой и забирает настройки сама от старого шлюза.
 
 ---
 
